@@ -129,26 +129,7 @@ export default function ControlPanel({
         {speechEnabled ? '🔊 Audio On' : '🔇 Audio Off'}
       </button>
 
-      {/* Record button */}
-      <div className="relative flex justify-center pt-2">
-        {isRecording && (
-          <>
-            <span className="absolute inset-0 rounded-full animate-ping bg-red-500/20 pointer-events-none" />
-            <span className="absolute inset-0 rounded-full animate-ping bg-red-500/10 pointer-events-none" style={{ animationDelay: '0.5s' }} />
-          </>
-        )}
-        <button
-          onClick={isRecording ? onStopRecording : onStartRecording}
-          disabled={!isConnected}
-          className={`relative w-full py-4 rounded-2xl font-bold text-base transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed
-            ${isRecording
-              ? 'bg-red-500/15 border-2 border-red-500/50 text-red-400 hover:bg-red-500/25 glow-red'
-              : 'bg-gradient-to-r from-indigo-600 to-cyan-500 text-white hover:from-indigo-500 hover:to-cyan-400 glow-indigo shadow-lg'
-            }`}
-        >
-          {isRecording ? '⏹ Stop Recording' : '🎙 Start Recording'}
-        </button>
-      </div>
+
     </aside>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { LANGUAGES, SOURCE_LANGUAGES } from '../constants/languages';
 
 function LangSelect({ value, onChange, options, label, disabled }) {
@@ -29,8 +29,6 @@ export default function TextInputMode({ isConnected, translateText }) {
   const [result, setResult]           = useState(null);   // {translated, audio}
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState('');
-  const audioRef = useRef(null);
-
   const handleTranslate = async () => {
     if (!inputText.trim() || loading) return;
     setLoading(true);

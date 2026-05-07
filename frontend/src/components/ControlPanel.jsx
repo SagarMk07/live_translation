@@ -1,135 +1,149 @@
 import { LANGUAGES, SOURCE_LANGUAGES } from '../constants/languages';
 
-const VOICES_BY_LANG = {
-  male:   'Male Voice',
-  female: 'Female Voice',
-};
-
-function Select({ label, value, onChange, options, disabled }) {
+function Field({ label, children }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest">{label}</label>
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        disabled={disabled}
-        className="w-full bg-white/5 border border-white/8 text-slate-200 text-sm rounded-lg px-3 py-2 outline-none focus:border-indigo-500/50 focus:bg-indigo-500/5 transition-all disabled:opacity-40 cursor-pointer"
-      >
-        {options.map(opt => (
-          <option key={opt.code ?? opt.value} value={opt.code ?? opt.value} className="bg-[#0f1123]">
-            {opt.flag ? `${opt.flag} ${opt.name}` : opt.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    <label className="control-field">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Select({ value, onChange, options, disabled, ariaLabel }) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      aria-label={ariaLabel}
+    >
+      {options.map((option) => (
+        <option key={option.code ?? option.value} value={option.code ?? option.value}>
+          {option.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
 export default function ControlPanel({
-  isConnected, isRecording,
-  sourceLang, setSourceLang,
-  targetLang, setTargetLang,
-  gender, setGender,
-  speed, setSpeed,
-  speechEnabled, setSpeechEnabled,
+  isConnected,
+  isRecording,
+  sourceLang,
+  setSourceLang,
+  targetLang,
+  setTargetLang,
+  gender,
+  setGender,
+  speed,
+  setSpeed,
+  speechEnabled,
+  setSpeechEnabled,
   detectedLang,
-  onStartRecording, onStopRecording,
+  onStartRecording,
+  onStopRecording,
+  onExportHistory,
+  hasHistory,
 }) {
-  const speedLabel = speed === 1 ? 'Normal' : speed < 1 ? `${Math.round((1 - speed) * 100)}% slower` : `${Math.round((speed - 1) * 100)}% faster`;
+  const speedLabel = `${speed.toFixed(1)}x`;
+  const detectedName = detectedLang
+    ? SOURCE_LANGUAGES.find((language) => language.code === detectedLang.code)?.name ?? detectedLang.code
+    : 'Waiting for speech';
 
   return (
-    <aside className="flex flex-col gap-5 w-full">
-
-      {/* Detected language badge */}
-      {detectedLang && (
-        <div className="glass rounded-xl px-4 py-3 border border-emerald-500/20 animate-fade-in">
-          <p className="text-xs text-slate-500 mb-1 uppercase tracking-widest font-semibold">Detected</p>
-          <div className="flex items-center justify-between">
-            <span className="text-emerald-300 font-semibold text-sm">
-              {SOURCE_LANGUAGES.find(l => l.code === detectedLang.code)?.name ?? detectedLang.code}
-            </span>
-            <span className="text-xs text-slate-500">
-              {Math.round(detectedLang.confidence * 100)}% confident
-            </span>
-          </div>
-          <div className="mt-2 h-1 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-emerald-400 transition-all duration-700"
-              style={{ width: `${Math.round(detectedLang.confidence * 100)}%` }}
-            />
-          </div>
+    <div className="control-card">
+      <div className="control-card-header">
+        <div>
+          <p>Session Controls</p>
+          <span>Compact voice and translation setup</span>
         </div>
-      )}
+        <span className={`mini-status ${isConnected ? 'is-online' : ''}`} />
+      </div>
 
-      {/* Source language */}
-      <Select
-        label="Source Language"
-        value={sourceLang}
-        onChange={setSourceLang}
-        options={SOURCE_LANGUAGES}
-        disabled={!isConnected}
-      />
+      <div className="detected-card">
+        <span>Detected language</span>
+        <strong>{detectedName}</strong>
+        {detectedLang && (
+          <div className="confidence-track">
+            <span style={{ width: `${Math.round((detectedLang.confidence ?? 1) * 100)}%` }} />
+          </div>
+        )}
+      </div>
 
-      {/* Target language */}
-      <Select
-        label="Translate To"
-        value={targetLang}
-        onChange={setTargetLang}
-        options={LANGUAGES}
-        disabled={!isConnected}
-      />
+      <Field label="Source">
+        <Select
+          value={sourceLang}
+          onChange={setSourceLang}
+          options={SOURCE_LANGUAGES}
+          disabled={!isConnected}
+          ariaLabel="Source language"
+        />
+      </Field>
 
-      {/* Voice gender */}
-      <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest">Voice</label>
-        <div className="grid grid-cols-2 gap-2">
-          {['male', 'female'].map(g => (
+      <Field label="Target">
+        <Select
+          value={targetLang}
+          onChange={setTargetLang}
+          options={LANGUAGES}
+          disabled={!isConnected}
+          ariaLabel="Target language"
+        />
+      </Field>
+
+      <Field label="Voice">
+        <div className="segmented-control">
+          {['male', 'female'].map((voice) => (
             <button
-              key={g}
-              onClick={() => setGender(g)}
-              className={`py-2 rounded-lg text-sm font-medium border transition-all capitalize
-                ${gender === g
-                  ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                  : 'bg-white/4 border-white/8 text-slate-500 hover:border-white/15 hover:text-slate-300'
-                }`}
+              key={voice}
+              className={gender === voice ? 'active' : ''}
+              onClick={() => setGender(voice)}
+              type="button"
             >
-              {g === 'male' ? '👨 Male' : '👩 Female'}
+              {voice}
             </button>
           ))}
         </div>
-      </div>
+      </Field>
 
-      {/* Speed */}
-      <div className="flex flex-col gap-1.5">
-        <div className="flex justify-between items-center">
-          <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest">Speed</label>
-          <span className="text-xs text-slate-400">{speedLabel}</span>
-        </div>
+      <Field label={`Speed ${speedLabel}`}>
         <input
           type="range"
-          min="0.5" max="1.5" step="0.1"
+          min="0.5"
+          max="1.5"
+          step="0.1"
           value={speed}
-          onChange={e => setSpeed(parseFloat(e.target.value))}
-          className="w-full"
+          onChange={(event) => setSpeed(parseFloat(event.target.value))}
         />
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>0.5×</span><span>1×</span><span>1.5×</span>
-        </div>
-      </div>
+      </Field>
 
-      {/* Speaker toggle */}
       <button
-        onClick={() => setSpeechEnabled(v => !v)}
-        className={`flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-all
-          ${speechEnabled
-            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20'
-            : 'bg-white/4 border-white/8 text-slate-500 hover:border-white/15'
-          }`}
+        className={`control-toggle ${speechEnabled ? 'active' : ''}`}
+        onClick={() => setSpeechEnabled((value) => !value)}
+        type="button"
       >
-        {speechEnabled ? '🔊 Audio On' : '🔇 Audio Off'}
+        <span className="speaker-icon" />
+        Audio playback
+        <strong>{speechEnabled ? 'On' : 'Off'}</strong>
       </button>
 
+      <button
+        className={`record-button ${isRecording ? 'recording' : ''}`}
+        onClick={isRecording ? onStopRecording : onStartRecording}
+        disabled={!isConnected}
+        type="button"
+      >
+        <span className="record-dot" />
+        {isRecording ? 'Stop recording' : 'Start recording'}
+      </button>
 
-    </aside>
+      <button
+        className="export-button"
+        onClick={onExportHistory}
+        disabled={!hasHistory}
+        type="button"
+      >
+        Export history
+      </button>
+    </div>
   );
 }

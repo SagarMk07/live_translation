@@ -4,6 +4,7 @@
  * Replaces the deprecated ScriptProcessor which returns all-zero samples
  * on some Chrome/Windows WASAPI combinations.
  */
+/* global AudioWorkletProcessor, registerProcessor */
 class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
     super();

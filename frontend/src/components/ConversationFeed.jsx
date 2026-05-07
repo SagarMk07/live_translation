@@ -1,75 +1,102 @@
 import { useEffect, useRef } from 'react';
+import { LANG_NAMES } from '../constants/languages';
+import AIStatusBadge from './AIStatusBadge';
 import ConversationCard from './ConversationCard';
+import WaveformVisualizer from './WaveformVisualizer';
 
-export default function ConversationFeed({ subtitles, partialTranscript, isRecording, aiStatus }) {
+function languageLabel(code, fallback = 'Auto detect') {
+  return LANG_NAMES[code] ?? code?.toUpperCase() ?? fallback;
+}
+
+export default function ConversationFeed({
+  subtitles,
+  partialTranscript,
+  isRecording,
+  aiStatus,
+  sourceLang,
+  targetLang,
+  detectedLang,
+  volumeLevel,
+  getAnalyserData,
+}) {
   const bottomRef = useRef(null);
+  const isEmpty = subtitles.length === 0 && !partialTranscript;
+  const detectedLabel = detectedLang ? languageLabel(detectedLang.code) : 'Detecting';
+  const routeLabel = `${languageLabel(sourceLang)} -> ${languageLabel(targetLang, 'Target')}`;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [subtitles, partialTranscript]);
 
-  const isEmpty = subtitles.length === 0 && !partialTranscript;
-
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+    <section className="conversation-workspace">
+      <div className="ai-status-header">
+        <div className="status-visual">
+          <WaveformVisualizer
+            getAnalyserData={getAnalyserData}
+            isActive={isRecording}
+            height={54}
+          />
+        </div>
+        <div className="status-copy">
+          <AIStatusBadge status={aiStatus} />
+          <h1>{aiStatus === 'idle' ? 'Ready for translation' : aiStatus === 'translating' ? 'Translating in real time' : 'Listening...'}</h1>
+          <p>{routeLabel}</p>
+        </div>
+        <div className="status-meta">
+          <span className="language-badge">{detectedLabel}</span>
+          <span className={`mic-indicator ${isRecording ? 'active' : ''}`}>
+            <i />
+            Mic {isRecording ? 'live' : 'idle'}
+          </span>
+          <span className="volume-meter">
+            <i style={{ width: `${Math.min(100, Math.round(volumeLevel * 100))}%` }} />
+          </span>
+        </div>
+      </div>
 
-        {/* Empty state */}
+      <div className="feed-scroll">
         {isEmpty && (
-          <div className="flex flex-col items-center justify-center h-full py-20 text-center select-none">
-            <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-5 text-4xl transition-all duration-500 border-2
-              ${isRecording
-                ? 'border-red-500/50 bg-red-500/10 shadow-lg shadow-red-500/20'
-                : 'border-indigo-500/20 bg-indigo-500/5'
-              }`}>
-              {isRecording ? '🎙' : '🌐'}
+          <div className="empty-feed">
+            <div className={`empty-mic ${isRecording ? 'active' : ''}`}>
+              <span />
             </div>
-            <h3 className="text-slate-400 font-semibold mb-2">
-              {isRecording ? 'Listening for speech…' : 'No conversation yet'}
-            </h3>
-            <p className="text-slate-600 text-sm max-w-xs">
-              {isRecording
-                ? 'Speak in any language. AI will detect and translate automatically.'
-                : 'Click the mic button and speak in any language to start translating.'}
+            <h2>{isRecording ? 'Listening for speech' : 'Start a multilingual session'}</h2>
+            <p>
+              Conversation cards will appear here with originals, translations, timestamps,
+              and detected language routing.
             </p>
-
-            {!isRecording && (
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {['🇮🇳 Hindi', '🇪🇸 Spanish', '🇫🇷 French', '🇨🇳 Chinese', '🇯🇵 Japanese', '🇩🇪 German'].map(lang => (
-                  <span key={lang} className="text-xs px-3 py-1 rounded-full border border-white/8 text-slate-500 bg-white/3">
-                    {lang}
-                  </span>
-                ))}
-              </div>
-            )}
+            <div className="empty-shimmer">
+              <span />
+              <span />
+              <span />
+            </div>
           </div>
         )}
 
-        {/* Conversation cards */}
-        {subtitles.map((entry, i) => (
+        {subtitles.map((entry, index) => (
           <ConversationCard
             key={entry.id}
             entry={entry}
-            isLatest={i === subtitles.length - 1}
+            isLatest={index === subtitles.length - 1}
           />
         ))}
 
-        {/* Live partial transcript card */}
         {partialTranscript && (
-          <div className="rounded-2xl px-4 py-3 border border-dashed border-indigo-500/30 bg-indigo-500/5 animate-fade-in">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-              <span className="text-xs text-slate-500 font-medium">Speaking…</span>
+          <div className="partial-card">
+            <div>
+              <span className="typing-dot" />
+              <strong>Live transcript</strong>
             </div>
-            <p className="text-slate-300 text-sm italic">
+            <p>
               {partialTranscript}
-              <span className="animate-blink ml-0.5 text-indigo-400 not-italic">|</span>
+              <span className="typing-cursor">|</span>
             </p>
           </div>
         )}
 
-        <div ref={bottomRef} className="h-1" />
+        <div ref={bottomRef} className="scroll-anchor" />
       </div>
-    </div>
+    </section>
   );
 }

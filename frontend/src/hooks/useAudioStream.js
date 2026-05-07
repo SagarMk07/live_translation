@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 const WS_URL = 'ws://localhost:8000/ws';
-const API_URL = 'http://localhost:8000';
 
 // ── Audio queue for sequential TTS playback ───────────────────────────────
 function createAudioQueue() {
@@ -65,12 +64,15 @@ export function useAudioStream() {
   const isMountedRef     = useRef(true);
   const volumeRafRef     = useRef(null);
   const subtitleIdRef    = useRef(0);
+  const pendingTextRequestsRef = useRef(new Map());
+  const handleServerMessageRef = useRef(null);
 
   useEffect(() => { speechEnabledRef.current = speechEnabled; }, [speechEnabled]);
 
   // ── WebSocket connection ──────────────────────────────────────────────────
   useEffect(() => {
     isMountedRef.current = true;
+    const audioQueue = audioQueueRef.current;
 
     const connectWs = () => {
       if (isConnectingRef.current) return;
@@ -99,12 +101,12 @@ export function useAudioStream() {
 
       ws.onmessage = (event) => {
         if (event.data instanceof Blob) {
-          if (speechEnabledRef.current) audioQueueRef.current.enqueue(event.data);
+          if (speechEnabledRef.current) audioQueue.enqueue(event.data);
           return;
         }
         try {
           const data = JSON.parse(event.data);
-          handleServerMessage(data);
+          handleServerMessageRef.current?.(data);
         } catch (e) {
           console.error('[WS] Parse error:', e);
         }
@@ -128,7 +130,7 @@ export function useAudioStream() {
       clearTimeout(reconnectRef.current);
       wsRef.current?.close();
       wsRef.current = null;
-      audioQueueRef.current.clear();
+      audioQueue.clear();
     };
   }, []);
 
@@ -188,7 +190,9 @@ export function useAudioStream() {
     }
   }, []);
 
-  const pendingTextRequestsRef = useRef(new Map());
+  useEffect(() => {
+    handleServerMessageRef.current = handleServerMessage;
+  }, [handleServerMessage]);
 
   // ── Send config to backend ────────────────────────────────────────────────
   const sendConfig = useCallback((updates) => {
@@ -268,7 +272,7 @@ export function useAudioStream() {
         permStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         console.log('[MIC] Permission granted ✅');
       } catch (permErr) {
-        throw new Error(`Microphone permission denied: ${permErr.message}`);
+        throw new Error(`Microphone permission denied: ${permErr.message}`, { cause: permErr });
       }
 
       // Step 2: Enumerate real devices after permission granted
@@ -360,9 +364,9 @@ export function useAudioStream() {
       setMicError(err.message);
       micStreamRef.current?.getTracks().forEach(t => t.stop());
       micStreamRef.current = null;
-      try { workletRef.current?.disconnect(); } catch {}
+      try { workletRef.current?.disconnect(); } catch { /* ignore cleanup errors */ }
       workletRef.current = null;
-      try { audioCtxRef.current?.close(); } catch {}
+      try { audioCtxRef.current?.close(); } catch { /* ignore cleanup errors */ }
       audioCtxRef.current = null;
     }
   };
@@ -371,9 +375,9 @@ export function useAudioStream() {
     isRecordingRef.current = false;
     stopVolumeTracking();
     analyserRef.current = null;
-    try { workletRef.current?.disconnect(); } catch {}
+    try { workletRef.current?.disconnect(); } catch { /* ignore cleanup errors */ }
     workletRef.current = null;
-    try { audioCtxRef.current?.close(); } catch {}
+    try { audioCtxRef.current?.close(); } catch { /* ignore cleanup errors */ }
     audioCtxRef.current = null;
     micStreamRef.current?.getTracks().forEach(t => t.stop());
     micStreamRef.current = null;

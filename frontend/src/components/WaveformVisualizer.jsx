@@ -31,7 +31,7 @@ export default function WaveformVisualizer({ getAnalyserData, isActive, height =
       const barW = Math.floor((W - (BAR_COUNT - 1) * 2) / BAR_COUNT);
 
       for (let i = 0; i < BAR_COUNT; i++) {
-        let value = BAR_MIN_HEIGHT;
+        let value;
         if (data && isActive) {
           // Sample from frequency data spread across bars
           const idx = Math.floor((i / BAR_COUNT) * data.length);

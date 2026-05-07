@@ -1,41 +1,69 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAudioStream } from './hooks/useAudioStream';
+import { LANG_NAMES } from './constants/languages';
 import ControlPanel from './components/ControlPanel';
 import ConversationFeed from './components/ConversationFeed';
-import AIStatusBadge from './components/AIStatusBadge';
 import BottomBar from './components/BottomBar';
-import ClassroomNotes from './components/ClassroomNotes';
 import HistoryPanel from './components/HistoryPanel';
 import './index.css';
 
 const TABS = [
-  { id: 'live',    icon: '🔴', label: 'Live',    shortLabel: 'Live'    },
-  { id: 'notes',   icon: '📚', label: 'Notes',   shortLabel: 'Notes'   },
-  { id: 'history', icon: '📜', label: 'History', shortLabel: 'History' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'text', label: 'Text' },
+  { id: 'history', label: 'History' },
 ];
 
-function ConnectionPill({ connected }) {
+function exportConversation(entries) {
+  const lines = entries.map((entry) => {
+    const time = entry.timestamp instanceof Date
+      ? entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : '';
+    const source = LANG_NAMES[entry.sourceLang] ?? entry.sourceLang ?? 'Auto';
+    const target = LANG_NAMES[entry.targetLang] ?? entry.targetLang ?? 'Target';
+    return [
+      `[${time}] ${source} -> ${target}`,
+      `Original: ${entry.original}`,
+      `Translation: ${entry.translated ?? '(pending)'}`,
+    ].join('\n');
+  });
+
+  const blob = new Blob([lines.join('\n\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `conversation-${new Date().toISOString().slice(0, 10)}.txt`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function BrandMark() {
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all
-      ${connected
-        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
-        : 'bg-red-500/10    border-red-500/25    text-red-400'}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-      {connected ? 'Online' : 'Connecting'}
+    <div className="brand-mark" aria-hidden="true">
+      <span />
+      <span />
+    </div>
+  );
+}
+
+function ConnectionStatus({ connected }) {
+  return (
+    <div className={`connection-pill ${connected ? 'is-online' : 'is-offline'}`}>
+      <span />
+      {connected ? 'Connected' : 'Reconnecting'}
     </div>
   );
 }
 
 export default function App() {
-  const [activeTab, setActiveTab]   = useState('live');
+  const [activeTab, setActiveTab] = useState('voice');
   const [sourceLang, setSourceLang] = useState('auto');
   const [targetLang, setTargetLang] = useState('es');
-  const [gender, setGender]         = useState('male');
-  const [speed, setSpeed]           = useState(1.0);
-  const [inputText, setInputText]   = useState('');
+  const [gender, setGender] = useState('male');
+  const [speed, setSpeed] = useState(1.0);
+  const [inputText, setInputText] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [typedEntries, setTypedEntries] = useState([]);
 
   const {
     isConnected, isRecording,
@@ -49,195 +77,158 @@ export default function App() {
     startRecording, stopRecording,
     sendConfig, clearSession,
     translateText,
-    sendTestTone,
   } = useAudioStream();
 
-  // Sync config
   useEffect(() => {
     sendConfig({ targetLang, sourceLang, gender, speed });
-  }, [targetLang, sourceLang, gender, speed, isConnected]);
+  }, [targetLang, sourceLang, gender, speed, sendConfig]);
 
-  // Derive AI status from state
+  const conversationEntries = useMemo(
+    () => [...subtitles, ...typedEntries].sort((a, b) => a.timestamp - b.timestamp),
+    [subtitles, typedEntries]
+  );
+
   const aiStatus = useMemo(() => {
+    if (isTranslating) return 'translating';
     if (!isRecording) return 'idle';
-    const hasPending = subtitles.some(s => s.translated === null);
+    const hasPending = conversationEntries.some((entry) => entry.translated === null);
     if (hasPending) return 'translating';
     if (partialTranscript || volumeLevel > 0.04) return 'listening';
     return 'listening';
-  }, [isRecording, subtitles, partialTranscript, volumeLevel]);
+  }, [isRecording, isTranslating, conversationEntries, partialTranscript, volumeLevel]);
 
-  // Typed translation via WebSocket
   const handleTranslateText = async () => {
-    if (!inputText.trim() || isTranslating) return;
+    const text = inputText.trim();
+    if (!text || isTranslating) return;
+
     setIsTranslating(true);
     try {
-      const result = await translateText(inputText.trim());
-      if (result?.translated) {
-        // Inject as a subtitle card
-        // (the hook already handles text_translation_result via pendingTextRequests)
-      }
-    } catch (e) {
-      console.error('[TEXT]', e);
+      const result = await translateText(text);
+      const translated = result?.translated ?? result?.text ?? result?.translation ?? '';
+      setTypedEntries((prev) => [
+        ...prev,
+        {
+          id: `typed-${Date.now()}`,
+          timestamp: new Date(),
+          original: text,
+          translated: translated || '(translation unavailable)',
+          sourceLang: sourceLang === 'auto' ? detectedLang?.code ?? 'auto' : sourceLang,
+          targetLang,
+          confidence: 1,
+          mode: 'text',
+        },
+      ]);
+      setInputText('');
+    } catch (error) {
+      console.error('[TEXT]', error);
     } finally {
       setIsTranslating(false);
-      setInputText('');
     }
   };
 
+  const handleClearSession = () => {
+    clearSession();
+    setTypedEntries([]);
+  };
+
   return (
-    <div
-      className="h-screen flex flex-col overflow-hidden"
-      style={{ background: 'linear-gradient(135deg, #06070f 0%, #0a0b18 50%, #080d16 100%)', fontFamily: "'Inter', system-ui, sans-serif" }}
-    >
-      {/* ── Background blobs ── */}
-      <div className="fixed inset-0 pointer-events-none" aria-hidden>
-        <div className="absolute top-0 left-1/3 w-[700px] h-[400px] opacity-[0.05] rounded-full"
-          style={{ background: 'radial-gradient(ellipse, #6366f1 0%, transparent 70%)' }} />
-        <div className="absolute bottom-0 right-0 w-[500px] h-[400px] opacity-[0.03] rounded-full"
-          style={{ background: 'radial-gradient(ellipse, #06b6d4 0%, transparent 70%)' }} />
-      </div>
-
-      {/* ──────────────────────── HEADER ──────────────────────────────── */}
-      <header className="flex-shrink-0 border-b border-white/6 glass-strong z-50">
-        <div className="flex items-center px-4 py-2.5 gap-4">
-
-          {/* Sidebar toggle + brand */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(v => !v)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all text-sm"
-              title="Toggle sidebar"
-            >
-              ☰
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-lg"
-                style={{ background: 'linear-gradient(135deg, #6366f1, #06b6d4)' }}>
-                🌐
-              </div>
-              <div className="hidden sm:block">
-                <div className="text-sm font-bold gradient-text leading-none">LinguaAI</div>
-                <div className="text-[10px] text-slate-600 leading-none mt-0.5">AI Classroom Translator</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <nav className="flex items-center gap-1 ml-2">
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all
-                  ${activeTab === tab.id
-                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/25'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-                  }`}
-              >
-                <span>{tab.icon}</span>
-                <span className="hidden sm:inline">{tab.label}</span>
-              </button>
-            ))}
-          </nav>
-
-          {/* Right section */}
-          <div className="ml-auto flex items-center gap-2">
-            {/* AI Status badge (only in live tab) */}
-            {activeTab === 'live' && (
-              <div className="hidden md:block">
-                <AIStatusBadge status={aiStatus} />
-              </div>
-            )}
-
-            <ConnectionPill connected={isConnected} />
-
-            {/* Speaker toggle */}
-            <button
-              onClick={() => setSpeechEnabled(v => !v)}
-              className={`text-sm w-8 h-8 rounded-lg flex items-center justify-center border transition-all
-                ${speechEnabled
-                  ? 'border-cyan-500/30 text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20'
-                  : 'border-white/8 text-slate-500 bg-white/3 hover:text-slate-300'
-                }`}
-              title={speechEnabled ? 'Mute audio' : 'Unmute audio'}
-            >
-              {speechEnabled ? '🔊' : '🔇'}
-            </button>
-
-            {/* Clear */}
-            <button
-              onClick={clearSession}
-              className="text-xs font-medium text-slate-500 hover:text-red-400 border border-white/8 hover:border-red-500/30 px-2.5 py-1.5 rounded-lg transition-all bg-white/3"
-              title="Clear session"
-            >
-              🗑
-            </button>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-brand">
+          <button
+            className="icon-button sidebar-toggle"
+            onClick={() => setSidebarOpen((value) => !value)}
+            aria-label="Toggle controls"
+          >
+            <span className="hamburger" />
+          </button>
+          <BrandMark />
+          <div>
+            <p className="app-name">LinguaAI</p>
+            <p className="app-subtitle">Real-time multilingual translator</p>
           </div>
         </div>
 
-        {/* Mobile AI status */}
-        {activeTab === 'live' && (
-          <div className="md:hidden flex px-4 pb-2">
-            <AIStatusBadge status={aiStatus} />
-          </div>
-        )}
+        <nav className="mode-tabs" aria-label="Translation mode">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              className={activeTab === tab.id ? 'active' : ''}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="topbar-actions">
+          <ConnectionStatus connected={isConnected} />
+          <button className="icon-button" onClick={handleClearSession} aria-label="Clear conversation">
+            <span className="clear-icon" />
+          </button>
+          <button className="icon-button" aria-label="Settings">
+            <span className="settings-icon" />
+          </button>
+        </div>
       </header>
 
-      {/* Mic error banner */}
       {micError && (
-        <div className="flex-shrink-0 mx-4 mt-2 px-4 py-2 rounded-xl border border-orange-500/30 bg-orange-500/10 text-orange-300 text-xs animate-fade-in z-40">
-          ⚠️ {micError}
+        <div className="mic-error" role="status">
+          {micError}
         </div>
       )}
 
-      {/* ──────────────────────── BODY ────────────────────────────────── */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-
-        {/* ── Sidebar ── */}
-        <aside className={`flex-shrink-0 border-r border-white/6 glass flex flex-col transition-all duration-300 overflow-hidden
-          ${sidebarOpen ? 'w-64 xl:w-72' : 'w-0'}`}>
-          {sidebarOpen && (
-            <div className="p-4 overflow-y-auto flex-1">
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-4">Controls</p>
-              <ControlPanel
-                isConnected={isConnected}
-                isRecording={isRecording}
-                sourceLang={sourceLang}  setSourceLang={setSourceLang}
-                targetLang={targetLang}  setTargetLang={setTargetLang}
-                gender={gender}          setGender={setGender}
-                speed={speed}            setSpeed={setSpeed}
-                speechEnabled={speechEnabled} setSpeechEnabled={setSpeechEnabled}
-                detectedLang={detectedLang}
-                onStartRecording={startRecording}
-                onStopRecording={stopRecording}
-              />
-              <button
-                onClick={sendTestTone}
-                disabled={!isConnected}
-                className="mt-3 w-full text-xs text-slate-700 hover:text-slate-500 py-1.5 transition-all disabled:opacity-30 text-center"
-                title="Send 440Hz test tone to check pipeline"
-              >
-                🔊 Test Pipeline
-              </button>
-            </div>
-          )}
+      <div className="dashboard-layout">
+        <div
+          className={`sidebar-scrim ${sidebarOpen ? 'is-visible' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+        <aside className={`dashboard-sidebar ${sidebarOpen ? 'is-open' : ''}`}>
+          <ControlPanel
+            isConnected={isConnected}
+            isRecording={isRecording}
+            sourceLang={sourceLang}
+            setSourceLang={setSourceLang}
+            targetLang={targetLang}
+            setTargetLang={setTargetLang}
+            gender={gender}
+            setGender={setGender}
+            speed={speed}
+            setSpeed={setSpeed}
+            speechEnabled={speechEnabled}
+            setSpeechEnabled={setSpeechEnabled}
+            detectedLang={detectedLang}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            onExportHistory={() => exportConversation(conversationEntries)}
+            hasHistory={conversationEntries.length > 0}
+          />
         </aside>
 
-        {/* ── Main Content ── */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-
-          {/* LIVE tab */}
-          {activeTab === 'live' && (
+        <main className="main-workspace">
+          {activeTab === 'history' ? (
+            <div className="history-workspace">
+              <HistoryPanel subtitles={conversationEntries} />
+            </div>
+          ) : (
             <>
               <ConversationFeed
-                subtitles={subtitles}
+                subtitles={conversationEntries}
                 partialTranscript={partialTranscript}
                 isRecording={isRecording}
                 aiStatus={aiStatus}
+                sourceLang={sourceLang}
+                targetLang={targetLang}
+                detectedLang={detectedLang}
+                volumeLevel={volumeLevel}
+                getAnalyserData={getAnalyserData}
               />
               <BottomBar
                 isConnected={isConnected}
                 isRecording={isRecording}
+                speechEnabled={speechEnabled}
+                setSpeechEnabled={setSpeechEnabled}
                 volumeLevel={volumeLevel}
                 getAnalyserData={getAnalyserData}
                 onStartRecording={startRecording}
@@ -246,25 +237,24 @@ export default function App() {
                 setInputText={setInputText}
                 onTranslateText={handleTranslateText}
                 isTranslating={isTranslating}
+                textMode={activeTab === 'text'}
               />
             </>
           )}
-
-          {/* NOTES tab */}
-          {activeTab === 'notes' && (
-            <div className="flex-1 overflow-y-auto p-5">
-              <ClassroomNotes subtitles={subtitles} isConnected={isConnected} />
-            </div>
-          )}
-
-          {/* HISTORY tab */}
-          {activeTab === 'history' && (
-            <div className="flex-1 overflow-y-auto p-5">
-              <HistoryPanel subtitles={subtitles} />
-            </div>
-          )}
         </main>
       </div>
+
+      <nav className="mobile-tabs" aria-label="Mobile navigation">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={activeTab === tab.id ? 'active' : ''}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

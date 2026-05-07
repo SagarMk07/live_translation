@@ -1,0 +1,50 @@
+export const LANGUAGES = [
+  { code: 'af', name: 'Afrikaans',            flag: '🇿🇦' },
+  { code: 'ar', name: 'Arabic',               flag: '🇸🇦' },
+  { code: 'bn', name: 'Bengali',              flag: '🇧🇩' },
+  { code: 'zh', name: 'Chinese (Simplified)', flag: '🇨🇳' },
+  { code: 'zh-tw', name: 'Chinese (Traditional)', flag: '🇹🇼' },
+  { code: 'cs', name: 'Czech',                flag: '🇨🇿' },
+  { code: 'da', name: 'Danish',               flag: '🇩🇰' },
+  { code: 'nl', name: 'Dutch',                flag: '🇳🇱' },
+  { code: 'en', name: 'English',              flag: '🇬🇧' },
+  { code: 'fi', name: 'Finnish',              flag: '🇫🇮' },
+  { code: 'fr', name: 'French',               flag: '🇫🇷' },
+  { code: 'de', name: 'German',               flag: '🇩🇪' },
+  { code: 'el', name: 'Greek',                flag: '🇬🇷' },
+  { code: 'gu', name: 'Gujarati',             flag: '🇮🇳' },
+  { code: 'hi', name: 'Hindi',                flag: '🇮🇳' },
+  { code: 'hu', name: 'Hungarian',            flag: '🇭🇺' },
+  { code: 'id', name: 'Indonesian',           flag: '🇮🇩' },
+  { code: 'it', name: 'Italian',              flag: '🇮🇹' },
+  { code: 'ja', name: 'Japanese',             flag: '🇯🇵' },
+  { code: 'kn', name: 'Kannada',              flag: '🇮🇳' },
+  { code: 'ko', name: 'Korean',               flag: '🇰🇷' },
+  { code: 'ml', name: 'Malayalam',            flag: '🇮🇳' },
+  { code: 'mr', name: 'Marathi',              flag: '🇮🇳' },
+  { code: 'no', name: 'Norwegian',            flag: '🇳🇴' },
+  { code: 'fa', name: 'Persian',              flag: '🇮🇷' },
+  { code: 'pl', name: 'Polish',               flag: '🇵🇱' },
+  { code: 'pt', name: 'Portuguese',           flag: '🇧🇷' },
+  { code: 'pa', name: 'Punjabi',              flag: '🇮🇳' },
+  { code: 'ro', name: 'Romanian',             flag: '🇷🇴' },
+  { code: 'ru', name: 'Russian',              flag: '🇷🇺' },
+  { code: 'es', name: 'Spanish',              flag: '🇪🇸' },
+  { code: 'sv', name: 'Swedish',              flag: '🇸🇪' },
+  { code: 'ta', name: 'Tamil',               flag: '🇮🇳' },
+  { code: 'te', name: 'Telugu',              flag: '🇮🇳' },
+  { code: 'th', name: 'Thai',                flag: '🇹🇭' },
+  { code: 'tr', name: 'Turkish',             flag: '🇹🇷' },
+  { code: 'uk', name: 'Ukrainian',           flag: '🇺🇦' },
+  { code: 'ur', name: 'Urdu',               flag: '🇵🇰' },
+  { code: 'vi', name: 'Vietnamese',          flag: '🇻🇳' },
+];
+
+export const LANG_NAMES = Object.fromEntries(
+  [{ code: 'auto', name: 'Auto Detect' }, ...LANGUAGES].map(l => [l.code, l.name])
+);
+
+export const SOURCE_LANGUAGES = [
+  { code: 'auto', name: 'Auto Detect', flag: '🔍' },
+  ...LANGUAGES,
+];

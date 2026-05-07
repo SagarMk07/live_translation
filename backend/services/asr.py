@@ -36,7 +36,6 @@ class DeepgramASR:
     def _connect_connection(self) -> bool:
         with self._lock:
             if self.connected and self.dg_connection is not None:
-                print("[ASR] Deepgram already connected")
                 return True
 
         self._close_connection()
@@ -49,9 +48,11 @@ class DeepgramASR:
         connection.on(LiveTranscriptionEvents.Close, self.on_close)
         connection.on(LiveTranscriptionEvents.Error, self.on_error)
 
+        # nova-2 with detect_language=True supports auto language detection
+        # across 30+ languages including Hindi, Tamil, Spanish, French, etc.
         options = LiveOptions(
             model="nova-2",
-            language="en-US",
+            detect_language=True,
             encoding="linear16",
             sample_rate=16000,
             channels=1,
@@ -71,7 +72,7 @@ class DeepgramASR:
         with self._lock:
             self.dg_connection = connection
             self.connected = True
-        print("[ASR] Deepgram connected: True")
+        print("[ASR] Deepgram connected: True (multilingual detect_language=True)")
         return True
 
     def _close_connection(self):
@@ -79,7 +80,6 @@ class DeepgramASR:
             if self.dg_connection is None:
                 self.connected = False
                 return
-
             old_connection = self.dg_connection
             self.dg_connection = None
             self.connected = False
@@ -109,9 +109,36 @@ class DeepgramASR:
     def on_error(self, _dg_connection, error=None, **kwargs):
         self._mark_disconnected(f"error event {error}", _dg_connection)
 
-    def on_message(self, _dg_connection, result, **kwargs):
-        print("Deepgram result:", result)
+    def _extract_detected_lang(self, result):
+        """Extract detected language code and confidence from Deepgram result.
+        Tries multiple attribute paths for SDK compatibility.
+        Returns (lang_code, confidence).
+        """
+        try:
+            alt = result.channel.alternatives[0]
+            # Nova-2 with detect_language returns languages list on the alternative
+            if hasattr(alt, 'languages') and alt.languages:
+                lang_obj = alt.languages[0]
+                if isinstance(lang_obj, dict):
+                    return lang_obj.get('language', 'en'), lang_obj.get('confidence', 1.0)
+                return (
+                    getattr(lang_obj, 'language', 'en'),
+                    getattr(lang_obj, 'confidence', 1.0)
+                )
+        except (AttributeError, IndexError):
+            pass
 
+        try:
+            # Some SDK versions put it on the result directly
+            dl = getattr(result, 'detected_language', None)
+            if dl:
+                return dl, 1.0
+        except AttributeError:
+            pass
+
+        return 'en', 1.0
+
+    def on_message(self, _dg_connection, result, **kwargs):
         try:
             text = result.channel.alternatives[0].transcript
         except (AttributeError, IndexError):
@@ -120,18 +147,20 @@ class DeepgramASR:
         if not text:
             return
 
-        print("Transcript:", text)
+        detected_lang, confidence = self._extract_detected_lang(result)
+        print(f"[ASR] Transcript: '{text}' | lang={detected_lang} ({confidence:.2f})")
 
         if self.loop is None or self.loop.is_closed():
-            print("[ASR] No active event loop for transcript callback")
             return
 
         callback = self.final_callback if result.is_final else self.partial_callback
-        self.loop.call_soon_threadsafe(asyncio.create_task, callback(text))
+        self.loop.call_soon_threadsafe(
+            asyncio.create_task,
+            callback(text, detected_lang, confidence)
+        )
 
     def send_audio(self, chunk: bytes):
         self._log_pcm_stats(chunk)
-        print("Audio chunk:", len(chunk), "connected:", self.is_connected())
 
         if self.disabled:
             return
@@ -149,22 +178,15 @@ class DeepgramASR:
     def _log_pcm_stats(self, chunk: bytes):
         self.chunk_count += 1
         if len(chunk) < 2:
-            print("[ASR PCM] empty/invalid chunk")
             return
 
         sample_count = len(chunk) // 2
         samples = struct.unpack(f"<{sample_count}h", chunk[:sample_count * 2])
-        peak = max(abs(sample) for sample in samples)
-        rms = int((sum(sample * sample for sample in samples) / sample_count) ** 0.5)
+        peak = max(abs(s) for s in samples)
+        rms = int((sum(s * s for s in samples) / sample_count) ** 0.5)
 
-        if self.chunk_count % 10 == 1 or peak < 100:
-            print(
-                "[ASR PCM]",
-                f"samples={sample_count}",
-                f"peak={peak}",
-                f"rms={rms}",
-            )
-
+        if self.chunk_count % 20 == 1 or peak < 100:
+            print(f"[ASR PCM] samples={sample_count} peak={peak} rms={rms}")
         if peak < 100:
             print("[ASR PCM] WARNING: backend is receiving near-silent PCM")
 
@@ -189,11 +211,8 @@ class DeepgramASR:
         return True
 
     def _reconnect_once(self) -> bool:
-        """Attempt a reconnect. Resets the one-shot flag so future chunks
-        can also trigger a reconnect if needed."""
         with self._lock:
             if self.reconnect_attempted:
-                # Already mid-attempt; don't pile on
                 return False
             self.reconnect_attempted = True
 
@@ -204,7 +223,6 @@ class DeepgramASR:
             print(f"[ASR] Deepgram reconnect failed: {e}")
             result = False
 
-        # Reset flag so the *next* disconnected chunk can retry again
         with self._lock:
             self.reconnect_attempted = False
 
@@ -213,8 +231,6 @@ class DeepgramASR:
     async def finish(self):
         with self._lock:
             self.disabled = True
-
         self._close_connection()
-
         self.loop = None
         print("[ASR] Finished")

@@ -1,202 +1,279 @@
+import { useState, useEffect } from 'react';
 import { useAudioStream } from './hooks/useAudioStream';
-import { useState, useEffect, useRef } from 'react';
-import './App.css';
+import ControlPanel from './components/ControlPanel';
+import SubtitleFeed from './components/SubtitleFeed';
+import WaveformVisualizer from './components/WaveformVisualizer';
+import TextInputMode from './components/TextInputMode';
+import HistoryPanel from './components/HistoryPanel';
+import './index.css';
 
-const LANGUAGES = [
-  { code: 'es', label: 'Spanish',    flag: '🇪🇸' },
-  { code: 'fr', label: 'French',     flag: '🇫🇷' },
-  { code: 'de', label: 'German',     flag: '🇩🇪' },
-  { code: 'hi', label: 'Hindi',      flag: '🇮🇳' },
-  { code: 'zh', label: 'Chinese',    flag: '🇨🇳' },
-  { code: 'ja', label: 'Japanese',   flag: '🇯🇵' },
-  { code: 'ar', label: 'Arabic',     flag: '🇸🇦' },
-  { code: 'pt', label: 'Portuguese', flag: '🇧🇷' },
-  { code: 'ru', label: 'Russian',    flag: '🇷🇺' },
-  { code: 'ko', label: 'Korean',     flag: '🇰🇷' },
-  { code: 'it', label: 'Italian',    flag: '🇮🇹' },
+// ── Tab definitions ──────────────────────────────────────────────────────────
+const TABS = [
+  { id: 'voice',   label: '🎙 Voice',   desc: 'Real-time speech translation' },
+  { id: 'text',    label: '✍️ Text',    desc: 'Type text to translate'       },
+  { id: 'history', label: '📜 History', desc: 'All translations'             },
 ];
 
-// ─── Status Pill ─────────────────────────────────────────────────────────────
-function StatusPill({ connected }) {
+// ── Connection pill ──────────────────────────────────────────────────────────
+function ConnectionPill({ connected }) {
   return (
-    <div className={`status-pill ${connected ? 'status-connected' : 'status-disconnected'}`}>
-      <span className={`status-dot ${connected ? 'dot-connected' : 'dot-disconnected'}`} />
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
+      ${connected
+        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+        : 'bg-red-500/10 border-red-500/25 text-red-400'
+      }`}
+    >
+      <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse-dot' : 'bg-red-400'}`} />
       {connected ? 'Connected' : 'Reconnecting…'}
     </div>
   );
 }
 
-// ─── Transcript Panel ─────────────────────────────────────────────────────────
-function TranscriptPanel({ finalTranscripts, partialTranscript }) {
-  const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); },
-    [finalTranscripts, partialTranscript]);
+// ── Main App ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [activeTab, setActiveTab]   = useState('voice');
+  const [sourceLang, setSourceLang] = useState('auto');
+  const [targetLang, setTargetLang] = useState('es');
+  const [gender, setGender]         = useState('male');
+  const [speed, setSpeed]           = useState(1.0);
 
-  return (
-    <div className="panel transcript-panel">
-      <div className="panel-label">🎙 Live Transcript · English</div>
-      <div className="panel-content">
-        {finalTranscripts.length === 0 && !partialTranscript && (
-          <p className="placeholder-text">Start speaking — subtitles will appear here…</p>
-        )}
-        {finalTranscripts.map((t, i) => (
-          <p key={i} className="transcript-final">{t}</p>
-        ))}
-        {partialTranscript && (
-          <p className="transcript-partial">{partialTranscript}<span className="cursor-blink">|</span></p>
-        )}
-        <div ref={endRef} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Translation Panel ────────────────────────────────────────────────────────
-function TranslationPanel({ translations, targetLang }) {
-  const endRef = useRef(null);
-  const lang   = LANGUAGES.find(l => l.code === targetLang);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [translations]);
-
-  return (
-    <div className="panel translation-panel">
-      <div className="panel-label">
-        {lang ? `${lang.flag} Translation · ${lang.label}` : `Translation · ${targetLang}`}
-      </div>
-      <div className="panel-content">
-        {translations.length === 0 && (
-          <p className="placeholder-text">Translation will appear per sentence…</p>
-        )}
-        {translations.map((t, i) => (
-          <p key={i} className="translation-text animate-in">{t}</p>
-        ))}
-        <div ref={endRef} />
-      </div>
-    </div>
-  );
-}
-
-// ─── App ──────────────────────────────────────────────────────────────────────
-function App() {
   const {
     isConnected, isRecording,
     speechEnabled, setSpeechEnabled,
-    asrSupported, micError,
+    micError,
+    partialTranscript,
+    subtitles,
+    detectedLang,
+    volumeLevel,
+    getAnalyserData,
     startRecording, stopRecording,
-    sendConfig, clearSession, sendTestTone,
-    partialTranscript, finalTranscripts, translations,
+    sendConfig, clearSession,
+    translateText,
+    sendTestTone,
   } = useAudioStream();
 
-  const [targetLang, setTargetLang] = useState('es');
-
+  // Sync config changes to backend
   useEffect(() => {
-    if (isConnected) sendConfig(targetLang);
-  }, [targetLang, isConnected, sendConfig]);
+    sendConfig({ targetLang, sourceLang, gender, speed });
+  }, [targetLang, sourceLang, gender, speed, isConnected]);
 
   return (
-    <div className="app">
+    <div className="min-h-screen flex flex-col" style={{ background: '#080912', fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-      {/* ── Mic silence error banner ── */}
+      {/* Background glow blobs */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        <div className="absolute top-[-20%] left-[30%] w-[600px] h-[600px] rounded-full opacity-[0.06]"
+          style={{ background: 'radial-gradient(circle, #6366f1, transparent 70%)' }} />
+        <div className="absolute bottom-[-10%] right-[10%] w-[500px] h-[500px] rounded-full opacity-[0.04]"
+          style={{ background: 'radial-gradient(circle, #06b6d4, transparent 70%)' }} />
+      </div>
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-50 glass-strong border-b border-white/6">
+        <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xl"
+              style={{ background: 'linear-gradient(135deg, #6366f1, #06b6d4)' }}>
+              🌐
+            </div>
+            <div>
+              <h1 className="text-base font-bold leading-none">
+                <span className="gradient-text">LinguaAI</span>
+              </h1>
+              <p className="text-[10px] text-slate-600 leading-none mt-0.5">Real-time AI Translator</p>
+            </div>
+          </div>
+
+          {/* Tab bar (desktop: header) */}
+          <nav className="hidden sm:flex items-center gap-1 glass rounded-xl p-1">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all
+                  ${activeTab === tab.id
+                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/25'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+                  }`}
+                title={tab.desc}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Right controls */}
+          <div className="flex items-center gap-2">
+            <ConnectionPill connected={isConnected} />
+            <button
+              onClick={clearSession}
+              className="text-xs font-medium text-slate-500 hover:text-red-400 border border-white/8 hover:border-red-500/30 px-3 py-1.5 rounded-lg transition-all bg-white/3 hover:bg-red-500/5"
+            >
+              🗑 Clear
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile tab bar */}
+        <div className="sm:hidden flex border-t border-white/6">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 py-2.5 text-xs font-semibold transition-all border-b-2
+                ${activeTab === tab.id ? 'tab-active' : 'tab-inactive'}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {/* ── Mic error banner ────────────────────────────────────────────────── */}
       {micError && (
-        <div className="browser-warning" style={{ background: 'rgba(255,80,0,0.15)', borderColor: '#ff5000' }}>
+        <div className="mx-4 mt-3 px-4 py-3 rounded-xl border border-orange-500/30 bg-orange-500/10 text-orange-300 text-sm animate-fade-in">
           {micError}
         </div>
       )}
 
-      {/* ── Browser warning ── */}
-      {!asrSupported && (
-        <div className="browser-warning">
-          ⚠️ Speech recognition requires <strong>Google Chrome</strong>. Other browsers are not supported.
-        </div>
-      )}
+      {/* ── Main content ────────────────────────────────────────────────────── */}
+      <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full px-4 sm:px-6 py-5 gap-5 min-h-0">
 
-      {/* ── Header ── */}
-      <header className="app-header">
-        <div className="header-brand">
-          <span className="brand-icon">🌐</span>
-          <span className="brand-name">
-            <span className="brand-accent">Multilingual</span> Translator
-          </span>
-        </div>
+        {/* ── VOICE TAB ──────────────────────────────────────────────────── */}
+        {activeTab === 'voice' && (
+          <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0">
 
-        <div className="header-controls">
-          <StatusPill connected={isConnected} />
+            {/* Left: Control Panel */}
+            <div className="w-full lg:w-72 xl:w-80 shrink-0">
+              <div className="glass rounded-2xl p-5 sticky top-24">
+                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Controls</h2>
+                <ControlPanel
+                  isConnected={isConnected}
+                  isRecording={isRecording}
+                  sourceLang={sourceLang}  setSourceLang={setSourceLang}
+                  targetLang={targetLang}  setTargetLang={setTargetLang}
+                  gender={gender}          setGender={setGender}
+                  speed={speed}            setSpeed={setSpeed}
+                  speechEnabled={speechEnabled} setSpeechEnabled={setSpeechEnabled}
+                  detectedLang={detectedLang}
+                  onStartRecording={startRecording}
+                  onStopRecording={stopRecording}
+                />
 
-          <select
-            id="lang-select"
-            value={targetLang}
-            onChange={e => setTargetLang(e.target.value)}
-            className="lang-select"
-            disabled={!isConnected}
-          >
-            {LANGUAGES.map(l => (
-              <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
-            ))}
-          </select>
+                {/* Debug test tone */}
+                <button
+                  onClick={sendTestTone}
+                  disabled={!isConnected}
+                  className="mt-4 w-full text-xs text-slate-600 hover:text-slate-400 py-1.5 transition-all disabled:opacity-30"
+                  title="Send a 440Hz test tone to verify WebSocket pipeline"
+                >
+                  🔊 Test Pipeline
+                </button>
+              </div>
+            </div>
 
-          <button
-            id="speech-toggle"
-            onClick={() => setSpeechEnabled(v => !v)}
-            className={`speech-toggle ${speechEnabled ? 'speech-on' : 'speech-off'}`}
-          >
-            {speechEnabled ? '🔊 Audio ON' : '🔇 Audio OFF'}
-          </button>
+            {/* Right: Subtitle Feed */}
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* Waveform */}
+              <div className={`glass rounded-2xl p-4 mb-4 transition-all duration-500 ${isRecording ? 'border border-red-500/20' : 'border border-white/5'}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    {isRecording && (
+                      <span className="flex items-center gap-1.5 text-xs font-bold text-red-400">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse-dot" />
+                        LIVE
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-600">
+                      {isRecording ? 'Microphone active' : 'Microphone idle'}
+                    </span>
+                  </div>
+                  {isRecording && (
+                    <span className="text-xs text-slate-600">
+                      Volume: {Math.round(volumeLevel * 100)}%
+                    </span>
+                  )}
+                </div>
+                <WaveformVisualizer
+                  getAnalyserData={getAnalyserData}
+                  isActive={isRecording}
+                  height={64}
+                />
+              </div>
 
-          <button id="clear-btn" onClick={clearSession} className="clear-btn">
-            🗑 Clear
-          </button>
-        </div>
-      </header>
+              {/* Subtitle panels */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0">
+                {/* Original transcript */}
+                <div className="glass rounded-2xl flex flex-col min-h-64 md:min-h-0">
+                  <div className="px-4 py-3 border-b border-white/6 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-slate-500" />
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                      Live Transcript
+                    </span>
+                    {detectedLang && (
+                      <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                        {detectedLang.code?.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <SubtitleFeed
+                    subtitles={subtitles.map(s => ({ ...s, translated: undefined }))}
+                    partialTranscript={partialTranscript}
+                    isRecording={isRecording}
+                  />
+                </div>
 
-      {/* ── Main ── */}
-      <main className="app-main">
-
-        {/* Record row */}
-        <div className="record-row">
-          <button
-            id="record-btn"
-            onClick={isRecording ? stopRecording : () => startRecording()}
-            disabled={!isConnected || !asrSupported}
-            className={`record-btn ${isRecording ? 'record-btn-stop' : 'record-btn-start'}`}
-          >
-            {isRecording ? (
-              <><span className="recording-pulse" /> Stop Recording</>
-            ) : (
-              <><span className="mic-icon">🎤</span> Start Recording</>
-            )}
-          </button>
-
-          {isRecording && <span className="live-badge">● LIVE</span>}
-
-          {/* Debug: test pipeline without mic */}
-          <button
-            id="test-tone-btn"
-            onClick={sendTestTone}
-            disabled={!isConnected}
-            className="clear-btn"
-            title="Sends a 440Hz sine wave to verify the WebSocket→Deepgram pipeline works without the mic"
-          >
-            🔊 Test Pipeline
-          </button>
-        </div>
-
-        {/* How it works hint */}
-        {!isRecording && finalTranscripts.length === 0 && (
-          <p className="hint-text">
-            Press <strong>Start Recording</strong>, then speak in English. Translations appear per sentence.
-          </p>
+                {/* Translated output */}
+                <div className="glass rounded-2xl flex flex-col min-h-64 md:min-h-0"
+                  style={{ borderColor: 'rgba(99,102,241,0.15)' }}>
+                  <div className="px-4 py-3 border-b border-indigo-500/10 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                    <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">
+                      Translation
+                    </span>
+                    <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">
+                      {targetLang.toUpperCase()}
+                    </span>
+                  </div>
+                  <SubtitleFeed
+                    subtitles={subtitles.map(s => ({ ...s, original: s.translated ?? '' }))}
+                    partialTranscript=""
+                    isRecording={isRecording}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
-        {/* Panels */}
-        <div className="panels">
-          <TranscriptPanel
-            finalTranscripts={finalTranscripts}
-            partialTranscript={partialTranscript}
-          />
-          <TranslationPanel translations={translations} targetLang={targetLang} />
-        </div>
+        {/* ── TEXT TAB ───────────────────────────────────────────────────── */}
+        {activeTab === 'text' && (
+          <div className="flex-1">
+            <div className="glass rounded-2xl p-6">
+              <h2 className="text-sm font-bold text-slate-400 mb-6 flex items-center gap-2">
+                <span>✍️</span> Type Text to Translate
+              </h2>
+              <TextInputMode
+                isConnected={isConnected}
+                translateText={translateText}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── HISTORY TAB ────────────────────────────────────────────────── */}
+        {activeTab === 'history' && (
+          <div className="flex-1">
+            <div className="glass rounded-2xl p-6">
+              <h2 className="text-sm font-bold text-slate-400 mb-6 flex items-center gap-2">
+                <span>📜</span> Translation History
+              </h2>
+              <HistoryPanel subtitles={subtitles} />
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
 }
-
-export default App;

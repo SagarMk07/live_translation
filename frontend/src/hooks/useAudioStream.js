@@ -1,99 +1,74 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
+const WS_URL = 'ws://localhost:8000/ws';
+const API_URL = 'http://localhost:8000';
+
+// ── Audio queue for sequential TTS playback ───────────────────────────────
 function createAudioQueue() {
   const queue = [];
   let isPlaying = false;
 
   async function playNext() {
     if (isPlaying || queue.length === 0) return;
-
     isPlaying = true;
     const blob = queue.shift();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    const done = () => {
-      URL.revokeObjectURL(url);
-      isPlaying = false;
-      playNext();
-    };
-
+    const done = () => { URL.revokeObjectURL(url); isPlaying = false; playNext(); };
     audio.onended = done;
     audio.onerror = done;
-
-    try {
-      await audio.play();
-    } catch {
-      done();
-    }
+    try { await audio.play(); } catch { done(); }
   }
 
   return {
-    enqueue(blob) {
-      queue.push(blob);
-      playNext();
-    },
-    clear() {
-      queue.length = 0;
-      isPlaying = false;
-    },
+    enqueue(blob) { queue.push(blob); playNext(); },
+    clear() { queue.length = 0; isPlaying = false; },
   };
 }
 
-function dispatchMessage(event, handlers, audioQueue, isSpeechEnabled) {
-  if (event.data instanceof Blob) {
-    if (isSpeechEnabled()) audioQueue.enqueue(event.data);
-    return;
+// ── Downsample Float32 from nativeRate → 16000 Hz ────────────────────────
+function downsampleBuffer(buffer, fromRate, toRate) {
+  if (fromRate === toRate) return buffer;
+  const ratio = fromRate / toRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    result[i] = buffer[Math.round(i * ratio)];
   }
-
-  try {
-    const data = JSON.parse(event.data);
-    switch (data.type) {
-      case 'partial':
-        handlers.partial(data.text);
-        break;
-      case 'final':
-        handlers.final(data.text);
-        break;
-      case 'translation':
-        handlers.translation(data.text);
-        break;
-      case 'error':
-        console.warn('[WS]', data.message);
-        break;
-      default:
-        console.warn('[WS] Unknown type:', data.type);
-    }
-  } catch (error) {
-    console.error('[WS] Parse error:', error);
-  }
+  return result;
 }
 
 export function useAudioStream() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [speechEnabled, setSpeechEnabled] = useState(true);
+  const [isConnected, setIsConnected]         = useState(false);
+  const [isRecording, setIsRecording]         = useState(false);
+  const [speechEnabled, setSpeechEnabled]     = useState(true);
   const [partialTranscript, setPartialTranscript] = useState('');
-  const [finalTranscripts, setFinalTranscripts] = useState([]);
-  const [translations, setTranslations] = useState([]);
-  const [micError, setMicError] = useState(null);  // null = ok, string = problem
+  const [subtitles, setSubtitles]             = useState([]);   // unified entries
+  const [detectedLang, setDetectedLang]       = useState(null); // {code, confidence}
+  const [micError, setMicError]               = useState(null);
+  const [volumeLevel, setVolumeLevel]         = useState(0);    // 0–1 for waveform
 
-  const wsRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const processorRef = useRef(null);  // ScriptProcessor (unused now, kept for compat)
-  const workletRef = useRef(null);    // AudioWorkletNode (active processor)
-  const micStreamRef = useRef(null);
-  const isRecordingRef = useRef(false);
+  // Pending subtitle — accumulates final + its translation
+  const pendingSubtitleRef = useRef(null);
+
+  const wsRef            = useRef(null);
+  const audioCtxRef      = useRef(null);
+  const workletRef       = useRef(null);
+  const analyserRef      = useRef(null);
+  const micStreamRef     = useRef(null);
+  const isRecordingRef   = useRef(false);
   const speechEnabledRef = useRef(true);
-  const targetLangRef = useRef('es');
-  const audioQueueRef = useRef(createAudioQueue());
-  const reconnectTimerRef = useRef(null);
-  const isConnectingRef = useRef(false);
-  const isMountedRef = useRef(true);
+  const configRef        = useRef({ targetLang: 'es', sourceLang: 'auto', voiceId: null, gender: 'male', speed: 1.0 });
+  const audioQueueRef    = useRef(createAudioQueue());
+  const reconnectRef     = useRef(null);
+  const isConnectingRef  = useRef(false);
+  const isMountedRef     = useRef(true);
+  const volumeRafRef     = useRef(null);
+  const subtitleIdRef    = useRef(0);
 
-  useEffect(() => {
-    speechEnabledRef.current = speechEnabled;
-  }, [speechEnabled]);
+  useEffect(() => { speechEnabledRef.current = speechEnabled; }, [speechEnabled]);
 
+  // ── WebSocket connection ──────────────────────────────────────────────────
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -103,84 +78,191 @@ export function useAudioStream() {
       if (wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
       isConnectingRef.current = true;
-      const ws = new WebSocket('ws://localhost:8000/ws');
+      const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
         isConnectingRef.current = false;
         setIsConnected(true);
-        clearTimeout(reconnectTimerRef.current);
-        ws.send(JSON.stringify({ type: 'config', target_lang: targetLangRef.current }));
+        clearTimeout(reconnectRef.current);
+        const cfg = configRef.current;
+        ws.send(JSON.stringify({
+          type: 'config',
+          target_lang: cfg.targetLang,
+          source_lang: cfg.sourceLang,
+          voice_id: cfg.voiceId,
+          gender: cfg.gender,
+          speed: cfg.speed,
+        }));
         console.log('[WS] Connected');
       };
 
       ws.onmessage = (event) => {
-        dispatchMessage(
-          event,
-          {
-            partial: (text) => setPartialTranscript(text),
-            final: (text) => {
-              setFinalTranscripts((prev) => [...prev, text]);
-              setPartialTranscript('');
-            },
-            translation: (text) => setTranslations((prev) => [...prev, text]),
-          },
-          audioQueueRef.current,
-          () => speechEnabledRef.current
-        );
+        if (event.data instanceof Blob) {
+          if (speechEnabledRef.current) audioQueueRef.current.enqueue(event.data);
+          return;
+        }
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch (e) {
+          console.error('[WS] Parse error:', e);
+        }
       };
 
       ws.onclose = () => {
         isConnectingRef.current = false;
         setIsConnected(false);
         if (isMountedRef.current) {
-          reconnectTimerRef.current = setTimeout(connectWs, 3000);
+          reconnectRef.current = setTimeout(connectWs, 3000);
         }
       };
 
-      ws.onerror = (error) => {
-        isConnectingRef.current = false;
-        console.error('[WS] Error:', error);
-      };
+      ws.onerror = () => { isConnectingRef.current = false; };
     };
 
     connectWs();
 
     return () => {
       isMountedRef.current = false;
-      clearTimeout(reconnectTimerRef.current);
+      clearTimeout(reconnectRef.current);
       wsRef.current?.close();
       wsRef.current = null;
       audioQueueRef.current.clear();
     };
   }, []);
 
-  const sendConfig = (lang) => {
-    targetLangRef.current = lang;
+  // ── Handle incoming server messages ──────────────────────────────────────
+  const handleServerMessage = useCallback((data) => {
+    switch (data.type) {
+      case 'partial':
+        setPartialTranscript(data.text);
+        if (data.detected_lang) {
+          setDetectedLang({ code: data.detected_lang, confidence: data.confidence ?? 1 });
+        }
+        break;
+
+      case 'final': {
+        setPartialTranscript('');
+        if (data.detected_lang) {
+          setDetectedLang({ code: data.detected_lang, confidence: data.confidence ?? 1 });
+        }
+        // Create pending subtitle entry waiting for its translation
+        const id = ++subtitleIdRef.current;
+        pendingSubtitleRef.current = { id, detectedLang: data.detected_lang };
+        setSubtitles(prev => [...prev, {
+          id,
+          timestamp: new Date(),
+          original: data.text,
+          translated: null,    // will be filled in on 'translation'
+          sourceLang: data.detected_lang ?? 'en',
+          confidence: data.confidence ?? 1,
+          targetLang: configRef.current.targetLang,
+        }]);
+        break;
+      }
+
+      case 'translation': {
+        const pending = pendingSubtitleRef.current;
+        if (pending) {
+          setSubtitles(prev => prev.map(s =>
+            s.id === pending.id ? { ...s, translated: data.text } : s
+          ));
+          pendingSubtitleRef.current = null;
+        }
+        break;
+      }
+
+      case 'text_translation_result':
+        // Handled by translateText promise via pendingTextRequests map
+        pendingTextRequestsRef.current.get(data.id)?.(data);
+        pendingTextRequestsRef.current.delete(data.id);
+        break;
+
+      case 'error':
+        console.warn('[WS]', data.message);
+        break;
+
+      default:
+        break;
+    }
+  }, []);
+
+  const pendingTextRequestsRef = useRef(new Map());
+
+  // ── Send config to backend ────────────────────────────────────────────────
+  const sendConfig = useCallback((updates) => {
+    Object.assign(configRef.current, updates);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'config', target_lang: lang }));
+      const cfg = configRef.current;
+      wsRef.current.send(JSON.stringify({
+        type: 'config',
+        target_lang: cfg.targetLang,
+        source_lang: cfg.sourceLang,
+        voice_id: cfg.voiceId,
+        gender: cfg.gender,
+        speed: cfg.speed,
+      }));
     }
-  };
+  }, []);
 
-  // Downsample Float32 from nativeRate → 16000 Hz
-  const downsampleBuffer = (buffer, fromRate, toRate) => {
-    if (fromRate === toRate) return buffer;
-    const ratio = fromRate / toRate;
-    const newLength = Math.round(buffer.length / ratio);
-    const result = new Float32Array(newLength);
-    for (let i = 0; i < newLength; i++) {
-      result[i] = buffer[Math.round(i * ratio)];
+  // ── Typed text translation via WebSocket ──────────────────────────────────
+  const translateText = useCallback((text) => {
+    return new Promise((resolve, reject) => {
+      const ws = wsRef.current;
+      if (ws?.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+      const id = `txt-${Date.now()}`;
+      pendingTextRequestsRef.current.set(id, resolve);
+      ws.send(JSON.stringify({ type: 'text_translate', text, id }));
+      // Timeout after 15s
+      setTimeout(() => {
+        if (pendingTextRequestsRef.current.has(id)) {
+          pendingTextRequestsRef.current.delete(id);
+          reject(new Error('Translation timed out'));
+        }
+      }, 15000);
+    });
+  }, []);
+
+  // ── Volume tracking for waveform ──────────────────────────────────────────
+  const startVolumeTracking = useCallback(() => {
+    const track = () => {
+      if (analyserRef.current) {
+        const data = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        setVolumeLevel(Math.min(1, avg / 80));
+      }
+      volumeRafRef.current = requestAnimationFrame(track);
+    };
+    track();
+  }, []);
+
+  const stopVolumeTracking = useCallback(() => {
+    if (volumeRafRef.current) {
+      cancelAnimationFrame(volumeRafRef.current);
+      volumeRafRef.current = null;
     }
-    return result;
-  };
+    setVolumeLevel(0);
+  }, []);
 
+  // ── Get raw analyser data (for WaveformVisualizer canvas) ────────────────
+  const getAnalyserData = useCallback(() => {
+    if (!analyserRef.current) return null;
+    const data = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(data);
+    return data;
+  }, []);
+
+  // ── Start recording ───────────────────────────────────────────────────────
   const startRecording = async () => {
     if (isRecordingRef.current) return;
 
     try {
-      // ── 1. Request permission first with a plain call ─────────────────────
-      // Browsers return empty labels/deviceIds until permission is granted.
-      // Doing device selection BEFORE permission causes OverconstrainedError.
+      // Step 1: Request permission first
       let permStream;
       try {
         permStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -189,133 +271,74 @@ export function useAudioStream() {
         throw new Error(`Microphone permission denied: ${permErr.message}`);
       }
 
-      // ── 2. Enumerate devices now that we have real labels/IDs ─────────────
+      // Step 2: Enumerate real devices after permission granted
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter((d) => d.kind === 'audioinput');
-      console.log('[MIC] Available audio inputs:');
-      audioInputs.forEach((d, i) => console.log(`  [${i}] label="${d.label}" deviceId="${d.deviceId}"`));
-
-      // Avoid virtual/loopback/communications devices — they often output silence
-      const SKIP_PATTERNS = /virtual|loopback|cable|voicemeeter|stereo mix|what u hear|communications/i;
+      const audioInputs = devices.filter(d => d.kind === 'audioinput');
+      const SKIP = /virtual|loopback|cable|voicemeeter|stereo mix|what u hear|communications/i;
       const physicalMic = audioInputs.find(
-        (d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications' && !SKIP_PATTERNS.test(d.label)
+        d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications' && !SKIP.test(d.label)
       );
+      console.log('[MIC] Selected:', physicalMic?.label ?? 'OS default');
+      permStream.getTracks().forEach(t => t.stop());
 
-      console.log('[MIC] Selected device:', physicalMic?.label ?? 'OS default');
-
-      // Stop the permission-only stream; we'll open the real one next
-      permStream.getTracks().forEach((t) => t.stop());
-
-      // ── 3. Get the real mic stream (specific device or default) ───────────
-      const audioConstraints = physicalMic
+      // Step 3: Get real mic stream
+      const constraints = physicalMic
         ? { deviceId: { exact: physicalMic.deviceId }, echoCancellation: true, noiseSuppression: true }
         : { echoCancellation: true, noiseSuppression: true };
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       micStreamRef.current = stream;
 
       const track = stream.getAudioTracks()[0];
-      console.log('MIC DEVICE:', track?.label);
-      console.log('TRACK ENABLED:', track?.enabled);
-      console.log('TRACK MUTED:', track?.muted);
-      console.log('TRACK READY STATE:', track?.readyState);
-
-      // Warn immediately if OS has muted the track
-      track.addEventListener('mute', () => console.warn('[MIC] ⚠️  Track was MUTED by OS/browser'));
-      track.addEventListener('unmute', () => console.log('[MIC] Track unmuted'));
-
+      console.log('[MIC] Track:', track?.label, '| state:', track?.readyState);
       if (!track?.enabled || track?.readyState !== 'live') {
         throw new Error(`Mic track not live — enabled:${track?.enabled} readyState:${track?.readyState}`);
       }
 
-      // ── 4. Create AudioContext at NATIVE rate ──────────────────────────────
+      // Step 4: AudioContext at native rate
       const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      // ⚠️  Do NOT force sampleRate:16000 — causes all-zero buffers on Chrome/Windows
       const audioContext = new AudioContextCtor();
       audioCtxRef.current = audioContext;
-
       await audioContext.resume();
-      console.log('[MIC] AudioContext state:', audioContext.state, '| nativeSampleRate:', audioContext.sampleRate);
-
-      if (audioContext.state !== 'running') {
-        await new Promise((resolve) => {
-          audioContext.onstatechange = () => {
-            if (audioContext.state === 'running') resolve();
-          };
-          audioContext.resume().then(resolve);
-        });
-        console.log('[MIC] AudioContext forced to RUNNING');
-      }
-
-      // ── 5. Build pipeline with AudioWorklet (replaces deprecated ScriptProcessor) ──
       const nativeRate = audioContext.sampleRate;
-      const source = audioContext.createMediaStreamSource(stream);
+      console.log('[MIC] AudioContext:', audioContext.state, '| rate:', nativeRate);
 
-      // Load the worklet module from public/
+      // Step 5: Build AudioWorklet pipeline
+      const source = audioContext.createMediaStreamSource(stream);
       await audioContext.audioWorklet.addModule('/audio-processor.js');
       const workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
       workletRef.current = workletNode;
-      console.log('[MIC] AudioWorklet loaded ✅');
 
-      // source → worklet → destination (destination keeps the graph alive)
+      // Step 6: AnalyserNode for waveform
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 128;
+      analyser.smoothingTimeConstant = 0.7;
+      analyserRef.current = analyser;
+      source.connect(analyser);
       source.connect(workletNode);
       workletNode.connect(audioContext.destination);
-      console.log('[MIC] source → workletNode → destination connected');
 
-      // ── 6. Analyser to verify signal (runs every 500ms for 5s) ────────────
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      const analyserData = new Uint8Array(analyser.fftSize);
-      let signalCheckCount = 0;
-      const signalInterval = setInterval(() => {
-        analyser.getByteTimeDomainData(analyserData);
-        const peak = Math.max(...analyserData);
-        console.log('[MIC] Analyser peak (128=silence, >128=real signal):', peak);
-        if (++signalCheckCount >= 10) clearInterval(signalInterval);
-      }, 500);
-
-      // ── 7. Receive PCM from the audio thread ──────────────────────────────
-      let callbackCount = 0;
-      let silentCallbacks = 0;
-      let silenceAlertSent = false;
-      const SILENCE_THRESHOLD = 0.0001;
-      const SILENCE_ALERT_AFTER = 15;  // ~1.25s at 4096 samples/85ms each
-
+      // Step 7: Receive PCM → downsample → send over WebSocket
+      let silentCount = 0;
+      let silenceAlerted = false;
       workletNode.port.onmessage = (event) => {
-        // event.data is ArrayBuffer (zero-copy transfer from audio thread)
         const float32 = new Float32Array(event.data);
-
-        // Compute peak
         let peak = 0;
         for (let i = 0; i < float32.length; i++) {
           const v = Math.abs(float32[i]);
           if (v > peak) peak = v;
         }
 
-        // Detailed log for first 5 chunks
-        if (callbackCount < 5) {
-          callbackCount++;
-          const rms = Math.sqrt(float32.reduce((s, v) => s + v * v, 0) / float32.length);
-          console.log(`[WORKLET] chunk #${callbackCount} | peak=${peak.toFixed(6)} | rms=${rms.toFixed(6)}`);
-          console.log('[WORKLET] first 10 samples:', Array.from(float32.slice(0, 10)).map(v => v.toFixed(6)));
-        }
-
-        // Silence detection
-        if (peak < SILENCE_THRESHOLD) {
-          silentCallbacks++;
-          if (silentCallbacks >= SILENCE_ALERT_AFTER && !silenceAlertSent) {
-            silenceAlertSent = true;
-            const msg = '⚠️ Mic silence detected. Check: Win Settings → Privacy → Microphone → allow browser. Also: Sound Settings → Input volume > 0.';
-            console.error('[MIC] SILENCE DETECTED:', msg);
-            setMicError(msg);
+        if (peak < 0.0001) {
+          silentCount++;
+          if (silentCount >= 15 && !silenceAlerted) {
+            silenceAlerted = true;
+            setMicError('⚠️ Mic silence detected. Check Windows Settings → Privacy → Microphone → allow browser. Also check Input volume in Sound Settings.');
           }
         } else {
-          silentCallbacks = 0;
-          if (silenceAlertSent) { silenceAlertSent = false; setMicError(null); }
+          silentCount = 0;
+          if (silenceAlerted) { silenceAlerted = false; setMicError(null); }
         }
 
-        // Downsample native rate → 16000 Hz
         const downsampled = downsampleBuffer(float32, nativeRate, 16000);
         const pcm = new Int16Array(downsampled.length);
         for (let i = 0; i < downsampled.length; i++) {
@@ -323,22 +346,19 @@ export function useAudioStream() {
         }
 
         const ws = wsRef.current;
-        if (ws?.readyState === WebSocket.OPEN) {
-          if (callbackCount <= 5) console.log('SENDING AUDIO:', pcm.byteLength, 'bytes');
-          ws.send(pcm.buffer);
-        } else {
-          if (callbackCount <= 5) console.log('WS NOT READY — state:', ws?.readyState);
-        }
+        if (ws?.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
       };
 
       isRecordingRef.current = true;
       setIsRecording(true);
       setMicError(null);
-      console.log('[MIC] Pipeline started ✅ AudioWorklet (native', nativeRate, 'Hz → 16000 Hz)');
+      startVolumeTracking();
+      console.log('[MIC] Pipeline started ✅ (native', nativeRate, 'Hz → 16000 Hz)');
 
     } catch (err) {
       console.error('[MIC] startRecording failed:', err);
-      micStreamRef.current?.getTracks().forEach((t) => t.stop());
+      setMicError(err.message);
+      micStreamRef.current?.getTracks().forEach(t => t.stop());
       micStreamRef.current = null;
       try { workletRef.current?.disconnect(); } catch {}
       workletRef.current = null;
@@ -347,92 +367,60 @@ export function useAudioStream() {
     }
   };
 
-
   const stopRecording = () => {
     isRecordingRef.current = false;
-
+    stopVolumeTracking();
+    analyserRef.current = null;
     try { workletRef.current?.disconnect(); } catch {}
     workletRef.current = null;
-
-    try { processorRef.current?.disconnect(); } catch {}
-    processorRef.current = null;
-
     try { audioCtxRef.current?.close(); } catch {}
     audioCtxRef.current = null;
-
-    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current?.getTracks().forEach(t => t.stop());
     micStreamRef.current = null;
-
     setIsRecording(false);
     setPartialTranscript('');
     console.log('[MIC] Stopped');
   };
 
   const clearSession = () => {
-    setFinalTranscripts([]);
-    setTranslations([]);
+    setSubtitles([]);
     setPartialTranscript('');
+    setDetectedLang(null);
     audioQueueRef.current.clear();
+    pendingSubtitleRef.current = null;
   };
 
-  /**
-   * Sends 3 seconds of a 440Hz sine wave directly over WebSocket,
-   * bypassing the mic entirely. Used to verify the pipeline end-to-end.
-   * If backend logs "peak > 0" for this → pipeline is fine, mic hardware is broken.
-   * If backend logs "peak = 0" even for this → WebSocket binary send is broken.
-   */
+  // ── Test tone (debugging) ─────────────────────────────────────────────────
   const sendTestTone = () => {
     const ws = wsRef.current;
-    if (ws?.readyState !== WebSocket.OPEN) {
-      console.warn('[TEST TONE] WebSocket not open');
-      return;
-    }
-
-    const SAMPLE_RATE = 16000;
-    const FREQUENCY = 440;       // Hz — A4 note, clearly audible to Deepgram
-    const AMPLITUDE = 16000;     // half of Int16 max (32767)
-    const CHUNK_SAMPLES = 1365;  // same size as our normal downsampled chunk
-    const TOTAL_CHUNKS = Math.ceil((SAMPLE_RATE * 3) / CHUNK_SAMPLES); // 3 seconds
-
-    console.log('[TEST TONE] Sending 3 seconds of 440Hz sine wave…');
-    let chunkIndex = 0;
-
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    const SR = 16000, FREQ = 440, AMP = 16000, CHUNK = 1365;
+    const TOTAL = Math.ceil((SR * 3) / CHUNK);
+    let idx = 0;
     const timer = setInterval(() => {
-      if (chunkIndex >= TOTAL_CHUNKS) {
-        clearInterval(timer);
-        console.log('[TEST TONE] Done. Check backend for peak > 0.');
-        return;
+      if (idx >= TOTAL) { clearInterval(timer); return; }
+      const pcm = new Int16Array(CHUNK);
+      for (let i = 0; i < CHUNK; i++) {
+        pcm[i] = Math.round(Math.sin(2 * Math.PI * FREQ * (idx * CHUNK + i) / SR) * AMP);
       }
-
-      const pcm = new Int16Array(CHUNK_SAMPLES);
-      const offset = chunkIndex * CHUNK_SAMPLES;
-      for (let i = 0; i < CHUNK_SAMPLES; i++) {
-        const t = (offset + i) / SAMPLE_RATE;
-        pcm[i] = Math.round(Math.sin(2 * Math.PI * FREQUENCY * t) * AMPLITUDE);
-      }
-
-      const peak = Math.max(...pcm);
-      if (chunkIndex < 3) console.log(`[TEST TONE] chunk #${chunkIndex + 1} peak=${peak}`);
-
       ws.send(pcm.buffer);
-      chunkIndex++;
-    }, (CHUNK_SAMPLES / SAMPLE_RATE) * 1000); // ~85ms per chunk
+      idx++;
+    }, (CHUNK / SR) * 1000);
+    console.log('[TEST TONE] Sending 3s of 440Hz…');
   };
 
   return {
-    isConnected,
-    isRecording,
-    speechEnabled,
-    setSpeechEnabled,
-    asrSupported: true,
+    isConnected, isRecording,
+    speechEnabled, setSpeechEnabled,
     micError,
-    startRecording,
-    stopRecording,
-    sendConfig,
-    clearSession,
-    sendTestTone,
     partialTranscript,
-    finalTranscripts,
-    translations,
+    subtitles,
+    detectedLang,
+    volumeLevel,
+    getAnalyserData,
+    startRecording, stopRecording,
+    sendConfig, clearSession,
+    translateText,
+    sendTestTone,
   };
 }

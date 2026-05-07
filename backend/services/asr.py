@@ -15,6 +15,8 @@ class DeepgramASR:
         self.loop = None
         self.connected = False
         self.reconnect_attempted = False
+        self.reconnect_failures = 0
+        self.max_reconnect_failures = 5
         self.disabled = False
         self.chunk_count = 0
         self._lock = threading.RLock()
@@ -31,6 +33,7 @@ class DeepgramASR:
 
         self.loop = asyncio.get_running_loop()
         self.reconnect_attempted = False
+        self.reconnect_failures = 0
         self._connect_connection()
 
     def _connect_connection(self) -> bool:
@@ -48,18 +51,14 @@ class DeepgramASR:
         connection.on(LiveTranscriptionEvents.Close, self.on_close)
         connection.on(LiveTranscriptionEvents.Error, self.on_error)
 
-        # nova-2 with detect_language=True supports auto language detection
-        # across 30+ languages including Hindi, Tamil, Spanish, French, etc.
         options = LiveOptions(
             model="nova-2",
-            detect_language=True,
-            encoding="linear16",
-            sample_rate=16000,
-            channels=1,
-            smart_format=True,
-            interim_results=True,
-            endpointing=300,
             punctuate=True,
+            interim_results=True,
+            smart_format=True,
+            encoding="linear16",
+            channels=1,
+            sample_rate=16000,
         )
 
         started = connection.start(options)
@@ -72,7 +71,8 @@ class DeepgramASR:
         with self._lock:
             self.dg_connection = connection
             self.connected = True
-        print("[ASR] Deepgram connected: True (multilingual detect_language=True)")
+            self.reconnect_failures = 0
+        print("[ASR] Deepgram connected")
         return True
 
     def _close_connection(self):
@@ -116,7 +116,7 @@ class DeepgramASR:
         """
         try:
             alt = result.channel.alternatives[0]
-            # Nova-2 with detect_language returns languages list on the alternative
+            # Some Deepgram responses include language metadata on alternatives.
             if hasattr(alt, 'languages') and alt.languages:
                 lang_obj = alt.languages[0]
                 if isinstance(lang_obj, dict):
@@ -148,30 +148,37 @@ class DeepgramASR:
             return
 
         detected_lang, confidence = self._extract_detected_lang(result)
-        print(f"[ASR] Transcript: '{text}' | lang={detected_lang} ({confidence:.2f})")
+        is_final = bool(getattr(result, "is_final", False))
+        event_type = "final" if is_final else "partial"
+        print(f"[ASR] Transcript received ({event_type}): '{text}'")
 
         if self.loop is None or self.loop.is_closed():
             return
 
-        callback = self.final_callback if result.is_final else self.partial_callback
+        if is_final:
+            print(f"[ASR] Final transcript: '{text}' | lang={detected_lang} ({confidence:.2f})")
+        else:
+            print(f"[ASR] Partial transcript: '{text}' | lang={detected_lang} ({confidence:.2f})")
+
+        callback = self.final_callback if is_final else self.partial_callback
         self.loop.call_soon_threadsafe(
             asyncio.create_task,
             callback(text, detected_lang, confidence)
         )
 
-    def send_audio(self, chunk: bytes):
+    async def send_audio(self, chunk: bytes):
         self._log_pcm_stats(chunk)
 
         if self.disabled:
             return
 
         if not self.is_connected():
-            if not self._reconnect_once():
+            if not await self._reconnect_once():
                 return
 
         if not self._send(chunk):
             self._mark_disconnected("send returned False")
-            if self._reconnect_once():
+            if await self._reconnect_once():
                 if not self._send(chunk):
                     self._mark_disconnected("send failed after reconnect")
 
@@ -210,13 +217,22 @@ class DeepgramASR:
 
         return True
 
-    def _reconnect_once(self) -> bool:
+    async def _reconnect_once(self) -> bool:
         with self._lock:
             if self.reconnect_attempted:
                 return False
+            if self.reconnect_failures >= self.max_reconnect_failures:
+                if not self.disabled:
+                    self.disabled = True
+                    print(
+                        "[ASR] Deepgram reconnect limit reached "
+                        f"({self.max_reconnect_failures}); ASR disabled for this session"
+                    )
+                return False
             self.reconnect_attempted = True
 
-        print("[ASR] Deepgram reconnect attempt…")
+        print("[ASR] Deepgram reconnect attempt...")
+        await asyncio.sleep(2)
         try:
             result = self._connect_connection()
         except Exception as e:
@@ -224,6 +240,10 @@ class DeepgramASR:
             result = False
 
         with self._lock:
+            if result:
+                self.reconnect_failures = 0
+            else:
+                self.reconnect_failures += 1
             self.reconnect_attempted = False
 
         return result

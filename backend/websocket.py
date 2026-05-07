@@ -36,9 +36,12 @@ async def process_translation_tts(
             "confidence": round(confidence, 2),
         })
 
+        print(f"[WS] TRANSLATION emit: '{translated}'")
+
         audio = await generate_audio(translated, target_lang, voice_id, gender, rate)
         if audio:
             await websocket.send_bytes(audio)
+            print("[WS] TTS audio emit")
 
     except Exception as e:
         print(f"[PIPELINE ERROR] {e}")
@@ -63,6 +66,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # ── ASR callbacks ─────────────────────────────────────────────────────────
     async def on_partial(text: str, detected_lang: str = "en", confidence: float = 1.0):
+        print(f"[WS] PARTIAL emit: '{text}' | detected={detected_lang} ({confidence:.2f})")
         await websocket.send_json({
             "type": "partial",
             "text": text,
@@ -111,7 +115,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Binary → PCM audio from AudioWorklet → Deepgram
             if message.get("bytes") is not None:
-                asr.send_audio(message["bytes"])
+                await asr.send_audio(message["bytes"])
                 await asyncio.sleep(0.001)
 
             elif message.get("text") is not None:

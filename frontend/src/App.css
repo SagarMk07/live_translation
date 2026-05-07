@@ -1,0 +1,425 @@
+/* ─── Reset & Base ──────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ─── Browser warning banner ─────────────────────────────────────────────── */
+.browser-warning {
+  background: rgba(234, 179, 8, 0.12);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.3);
+  color: #fbbf24;
+  text-align: center;
+  padding: 10px 20px;
+  font-size: 0.85rem;
+}
+
+/* ─── Hint text ──────────────────────────────────────────────────────────── */
+.hint-text {
+  text-align: center;
+  color: var(--text-faded);
+  font-size: 0.9rem;
+  margin-top: -8px;
+}
+
+.hint-text strong {
+  color: var(--text-secondary);
+}
+
+:root {
+  --bg:          #0a0b0d;
+  --bg-panel:    rgba(18, 20, 26, 0.85);
+  --bg-panel2:   rgba(10, 30, 60, 0.5);
+  --border:      rgba(255, 255, 255, 0.07);
+  --border-blue: rgba(59, 130, 246, 0.25);
+  --accent:      #3b82f6;
+  --accent-2:    #06b6d4;
+  --text-primary:    #f1f5f9;
+  --text-secondary:  #94a3b8;
+  --text-faded:      #475569;
+  --red:         #ef4444;
+  --green:       #22c55e;
+  --radius:      16px;
+  --radius-sm:   8px;
+  --font:        'Inter', 'Segoe UI', system-ui, sans-serif;
+  --transition:  0.2s ease;
+}
+
+/* ─── App shell ─────────────────────────────────────────────────────────── */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 80% 40% at 50% -10%, rgba(59, 130, 246, 0.12), transparent),
+    radial-gradient(ellipse 60% 50% at 80% 100%, rgba(6, 182, 212, 0.07), transparent);
+  font-family: var(--font);
+  color: var(--text-primary);
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  background: rgba(10, 11, 13, 0.75);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.brand-icon { font-size: 1.4rem; }
+.brand-accent { color: var(--accent); }
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ─── Status pill ───────────────────────────────────────────────────────── */
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.status-connected {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.25);
+  color: #4ade80;
+}
+
+.status-disconnected {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dot-connected {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse-green 2s infinite;
+}
+
+.dot-disconnected {
+  background: var(--red);
+}
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Language select ───────────────────────────────────────────────────── */
+.lang-select {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.lang-select:hover,
+.lang-select:focus {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.lang-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Speech toggle ─────────────────────────────────────────────────────── */
+.speech-toggle,
+.clear-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.speech-on {
+  background: rgba(59, 130, 246, 0.12);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.speech-on:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+.speech-off {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-faded);
+  border-color: var(--border);
+}
+
+.speech-off:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.clear-btn {
+  background: rgba(239, 68, 68, 0.07);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.clear-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* ─── Main content ──────────────────────────────────────────────────────── */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 28px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ─── Record row ─────────────────────────────────────────────────────────── */
+.record-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+/* ─── Record button ──────────────────────────────────────────────────────── */
+.record-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  border-radius: 99px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  letter-spacing: 0.01em;
+  position: relative;
+  overflow: hidden;
+}
+
+.record-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.record-btn-start {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.4);
+}
+
+.record-btn-start:hover {
+  box-shadow: 0 0 36px rgba(59, 130, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.record-btn-stop {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 2px solid rgba(239, 68, 68, 0.5);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);
+}
+
+.record-btn-stop:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.mic-icon { font-size: 1.1rem; }
+
+/* Recording pulse dot inside button */
+.recording-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red);
+  display: inline-block;
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* LIVE badge */
+.live-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: 0.08em;
+  animation: blink 1.2s step-start infinite;
+}
+
+/* ─── Panels grid ────────────────────────────────────────────────────────── */
+.panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  flex: 1;
+  min-height: 400px;
+}
+
+@media (max-width: 768px) {
+  .panels { grid-template-columns: 1fr; }
+}
+
+/* ─── Panel base ─────────────────────────────────────────────────────────── */
+.panel {
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  min-height: 280px;
+}
+
+.panel-label {
+  padding: 12px 18px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scroll-behavior: smooth;
+}
+
+.panel-content::-webkit-scrollbar { width: 4px; }
+.panel-content::-webkit-scrollbar-track { background: transparent; }
+.panel-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* ─── Transcript panel ───────────────────────────────────────────────────── */
+.transcript-panel {
+  background: var(--bg-panel);
+}
+
+.transcript-panel .panel-label {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.transcript-final {
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.transcript-partial {
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--text-faded);
+  font-style: italic;
+  transition: color 0.3s;
+}
+
+/* ─── Translation panel ──────────────────────────────────────────────────── */
+.translation-panel {
+  background: var(--bg-panel2);
+  border-color: var(--border-blue);
+}
+
+.translation-panel .panel-label {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.04);
+  border-bottom-color: var(--border-blue);
+}
+
+.translation-text {
+  font-size: 1.15rem;
+  line-height: 1.7;
+  color: #bfdbfe;
+  font-weight: 500;
+}
+
+/* ─── Placeholder text ───────────────────────────────────────────────────── */
+.placeholder-text {
+  color: var(--text-faded);
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+/* ─── Animate-in for new translation lines ──────────────────────────────── */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in {
+  animation: slide-in 0.3s ease forwards;
+}
+
+/* ─── Blinking cursor on partial text ───────────────────────────────────── */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.cursor-blink {
+  display: inline-block;
+  margin-left: 1px;
+  animation: cursor-blink 0.8s step-start infinite;
+  color: var(--accent);
+  font-weight: 300;
+}

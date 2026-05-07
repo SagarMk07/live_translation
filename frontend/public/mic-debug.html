@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>🎤 Mic Debug — Zero PCM Diagnostic</title>
+  <style>
+    body { background: #0f0f0f; color: #e0e0e0; font-family: monospace; padding: 24px; }
+    h1 { color: #ff6b35; }
+    button { padding: 12px 24px; margin: 8px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
+    #startBtn  { background: #22c55e; color: #000; }
+    #stopBtn   { background: #ef4444; color: #fff; display: none; }
+    #enumBtn   { background: #3b82f6; color: #fff; }
+    #log       { margin-top: 20px; background: #1a1a1a; padding: 16px; border-radius: 8px;
+                 height: 400px; overflow-y: auto; font-size: 13px; line-height: 1.6; }
+    .ok    { color: #22c55e; }
+    .warn  { color: #f59e0b; }
+    .error { color: #ef4444; }
+    .info  { color: #60a5fa; }
+    #meter { width: 100%; height: 24px; background: #333; border-radius: 4px; margin-top: 12px; overflow: hidden; }
+    #bar   { height: 100%; width: 0%; background: #22c55e; transition: width 0.1s; }
+  </style>
+</head>
+<body>
+  <h1>🎤 Mic Zero-PCM Diagnostic</h1>
+  <p>Open DevTools Console. Click START, speak loudly. Watch the logs.</p>
+
+  <button id="enumBtn">📋 List Audio Devices</button>
+  <button id="startBtn">▶ START MIC TEST</button>
+  <button id="stopBtn">⏹ STOP</button>
+
+  <div id="meter"><div id="bar"></div></div>
+
+  <div id="log"></div>
+
+  <script>
+    const logEl   = document.getElementById('log');
+    const bar     = document.getElementById('bar');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn  = document.getElementById('stopBtn');
+
+    let audioCtx, stream, analyser, processor, intervalId;
+
+    function log(msg, cls = '') {
+      const ts  = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = cls;
+      div.textContent = `[${ts}] ${msg}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(msg);
+    }
+
+    // ── List devices ──────────────────────────────────────────────────────────
+    document.getElementById('enumBtn').onclick = async () => {
+      log('Enumerating devices...', 'info');
+      try {
+        // Must call getUserMedia first so labels are revealed
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs  = devices.filter(d => d.kind === 'audioinput');
+        if (inputs.length === 0) {
+          log('❌ NO audio input devices found!', 'error');
+        } else {
+          log(`✅ Found ${inputs.length} audio input device(s):`, 'ok');
+          inputs.forEach((d, i) => log(`  [${i}] id="${d.deviceId}"  label="${d.label}"`, 'info'));
+        }
+      } catch (e) {
+        log('❌ enumerateDevices failed: ' + e.message, 'error');
+      }
+    };
+
+    // ── Start test ────────────────────────────────────────────────────────────
+    startBtn.onclick = async () => {
+      startBtn.style.display = 'none';
+      stopBtn.style.display  = 'inline-block';
+      log('═══════════════════════════════════════', 'info');
+      log('START: mic diagnostic', 'info');
+
+      // Step 1 — AudioContext
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        log(`AudioContext created. state = ${audioCtx.state}`, audioCtx.state === 'running' ? 'ok' : 'warn');
+        await audioCtx.resume();
+        log(`AudioContext after resume. state = ${audioCtx.state}`, audioCtx.state === 'running' ? 'ok' : 'error');
+        if (audioCtx.state !== 'running') {
+          log('❌ AudioContext NOT running — user interaction may be required', 'error');
+        }
+      } catch (e) {
+        log('❌ AudioContext failed: ' + e.message, 'error');
+        return;
+      }
+
+      // Step 2 — getUserMedia
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl:  true,
+          }
+        });
+        const track = stream.getAudioTracks()[0];
+        log(`✅ getUserMedia OK`, 'ok');
+        log(`   MIC DEVICE: "${track.label}"`, 'info');
+        log(`   track.enabled  = ${track.enabled}`,  track.enabled  ? 'ok' : 'error');
+        log(`   track.muted    = ${track.muted}`,    track.muted    ? 'error' : 'ok');
+        log(`   track.readyState = ${track.readyState}`, track.readyState === 'live' ? 'ok' : 'error');
+
+        if (!track.enabled || track.muted || track.readyState !== 'live') {
+          log('❌ Track is disabled / muted / not live — PCM will be zero!', 'error');
+        }
+      } catch (e) {
+        log('❌ getUserMedia failed: ' + e.message, 'error');
+        return;
+      }
+
+      const source = audioCtx.createMediaStreamSource(stream);
+
+      // Step 3 — AnalyserNode raw signal check
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+
+      const timeDomain = new Uint8Array(analyser.fftSize);
+      let reportCount  = 0;
+
+      intervalId = setInterval(() => {
+        analyser.getByteTimeDomainData(timeDomain);
+        let maxRaw = 0;
+        for (let i = 0; i < timeDomain.length; i++) {
+          maxRaw = Math.max(maxRaw, Math.abs(timeDomain[i] - 128));
+        }
+        const pct = Math.min(100, (maxRaw / 128) * 100 * 4);
+        bar.style.width = pct + '%';
+        bar.style.background = maxRaw > 10 ? '#22c55e' : '#ef4444';
+
+        reportCount++;
+        if (reportCount <= 10 || reportCount % 5 === 0) {
+          const status = maxRaw > 10 ? '✅ mic OK' : '❌ SILENT';
+          log(`RAW MIC LEVEL: ${maxRaw} ${status}`, maxRaw > 10 ? 'ok' : 'error');
+        }
+      }, 200);
+
+      // Step 4 — ScriptProcessor
+      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      let frameCount = 0;
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        let maxF = 0;
+        for (let i = 0; i < input.length; i++) {
+          maxF = Math.max(maxF, Math.abs(input[i]));
+        }
+
+        frameCount++;
+        if (frameCount <= 5 || frameCount % 20 === 0) {
+          log(`🔊 AUDIO LEVEL: ${maxF.toFixed(5)}  (frame ${frameCount})`,
+              maxF > 0.01 ? 'ok' : maxF > 0 ? 'warn' : 'error');
+        }
+
+        // PCM conversion check
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = s * 32767;
+        }
+        const peak = Math.max(...Array.from(pcm).map(Math.abs));
+        if (frameCount <= 5 || frameCount % 20 === 0) {
+          log(`   PCM peak: ${peak}  (expected > 1000 when speaking)`,
+              peak > 1000 ? 'ok' : peak > 0 ? 'warn' : 'error');
+        }
+      };
+
+      log('Pipeline active. SPEAK LOUDLY and watch RAW MIC LEVEL above.', 'info');
+      log('If RAW MIC LEVEL stays 0 → OS/browser mic issue (not code).', 'warn');
+    };
+
+    // ── Stop ──────────────────────────────────────────────────────────────────
+    stopBtn.onclick = () => {
+      clearInterval(intervalId);
+      try { processor?.disconnect(); } catch {}
+      try { analyser?.disconnect(); } catch {}
+      try { audioCtx?.close(); } catch {}
+      stream?.getTracks().forEach(t => t.stop());
+      bar.style.width = '0%';
+      startBtn.style.display = 'inline-block';
+      stopBtn.style.display  = 'none';
+      log('Stopped. See results above.', 'info');
+    };
+  </script>
+</body>
+</html>

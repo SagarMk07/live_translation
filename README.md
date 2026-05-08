@@ -1,227 +1,170 @@
-# 🌐 Real-Time Multilingual Classroom Translator
+# Real-Time Multilingual Classroom Translator
 
-A production-quality, low-latency speech translation system built with **FastAPI + WebSockets** on the backend and **React + Vite** on the frontend. Speak in English — see live transcriptions and hear translated speech in 11 languages instantly.
+A low-latency classroom translation app built with FastAPI, WebSockets, React, and Vite. It accepts speech or typed text, translates it into supported target languages, and can return translated speech audio.
 
----
-
-## ✨ Features
+## Features
 
 | Feature | Details |
 |---|---|
-| 🎙 Live Transcription | Real-time English speech-to-text via Deepgram Nova-2 |
-| 🌍 Instant Translation | English → 11 languages via OpenAI `gpt-4o-mini` |
-| 🔊 Speech Output | Translated audio via Microsoft Edge TTS — queue-based, no overlap |
-| 📡 WebSocket Streaming | Binary audio chunks + JSON messages over a single connection |
-| 🟢 Status Indicator | Animated live connection pill (green pulse / red) |
-| ✍️ Partial Transcripts | Faded italic text updates as you speak; snaps solid when final |
-| 🎭 Slide-in Translations | Each new translation line animates in smoothly |
-| 🔇 Speech Toggle | Disable audio output without breaking translation |
-| 🗑 Clear Session | Reset transcript + translation history in one click |
+| Live transcription | Streams microphone audio to the backend over WebSockets. |
+| Translation | Uses OpenAI for multilingual translation. |
+| Speech output | Uses Microsoft Edge TTS voices for generated audio. |
+| Typed translation | REST endpoint for text input, translation, voice selection, and optional audio. |
+| Classroom notes | Generates structured notes from a transcript, with a fallback when OpenAI is unavailable. |
+| Session UI | React interface with conversation history, controls, language selection, and audio playback. |
 
----
+## Project Structure
 
-## 🗂 Project Structure
-
-```
+```text
 Multilingual/
-├── .env                        # API keys (never commit this!)
-├── backend/
-│   ├── main.py                 # FastAPI app + CORS + dotenv
-│   ├── websocket.py            # WebSocket endpoint, connection state, pipeline
-│   ├── services/
-│   │   ├── asr.py              # Deepgram live-streaming ASR client
-│   │   ├── translator.py       # OpenAI gpt-4o-mini translation (async)
-│   │   └── tts.py              # Microsoft Edge TTS → MP3 bytes
-│   └── utils/
-│       ├── audio.py            # (reserved for audio utilities)
-│       └── buffer.py           # (reserved for buffer utilities)
-└── frontend/
-    ├── src/
-    │   ├── App.jsx             # Main UI — header, panels, record button
-    │   ├── App.css             # Dark glassmorphism design system
-    │   ├── index.css           # Inter font + base reset
-    │   └── hooks/
-    │       └── useAudioStream.js  # WebSocket + audio queue + recording hook
-    ├── index.html
-    ├── vite.config.js
-    └── package.json
+|-- .env.example
+|-- backend/
+|   |-- main.py
+|   |-- websocket.py
+|   |-- requirements.txt
+|   |-- services/
+|   |   |-- asr.py
+|   |   |-- translator.py
+|   |   `-- tts.py
+|   |-- routes/
+|   `-- utils/
+`-- frontend/
+    |-- package.json
+    |-- vite.config.js
+    |-- public/
+    `-- src/
+        |-- App.jsx
+        |-- App.css
+        |-- components/
+        |-- hooks/
+        `-- constants/
 ```
 
----
+## Requirements
 
-## 🛠 Tech Stack
+- Python 3.10 or newer. This project has been run with Python 3.14 through `uv`.
+- Node.js 18 or newer.
+- OpenAI API key.
+- Deepgram API key if you enable live ASR.
 
-### Backend
-- **FastAPI** — async Python web framework
-- **WebSockets** — real-time bidirectional communication
-- **Deepgram Nova-2** — streaming ASR (speech-to-text)
-- **OpenAI gpt-4o-mini** — fast, accurate translation
-- **edge-tts** — Microsoft Neural TTS voices, 11 languages
-- **python-dotenv** — environment variable loading
+## Environment
 
-### Frontend
-- **React 19** — UI components
-- **Vite 8** — lightning-fast dev server & build
-- **Tailwind CSS v4** — utility styling
-- **Web Audio API** — raw PCM microphone capture at 16 kHz
-- **Audio Queue** — sequential blob playback, no overlap
-
----
-
-## ⚙️ Setup
-
-### Prerequisites
-- Python 3.10+ (project uses 3.14)
-- Node.js 18+
-- API keys for Deepgram and OpenAI
-
-### 1. Clone & Configure
-
-```bash
-git clone <your-repo-url>
-cd Multilingual
-```
-
-Edit **`.env`** in the project root:
+Create a `.env` file in the project root:
 
 ```env
-DEEPGRAM_API_KEY=your_deepgram_api_key
 OPENAI_API_KEY=your_openai_api_key
+DEEPGRAM_API_KEY=your_deepgram_api_key
 ```
 
-> **Deepgram key**: [console.deepgram.com](https://console.deepgram.com)  
-> **OpenAI key**: [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+The app has fallback behavior for some AI features, but full translation, notes, and ASR require valid keys.
 
----
+## Backend Setup
 
-### 2. Backend Setup
+### Option A: Standard Python
 
-**Windows (PowerShell):**
 ```powershell
-# Create and activate virtual environment
-python -m venv venv
-.\venv\Scripts\activate
-
-# Install all dependencies (single line — no backslash needed)
-pip install fastapi "uvicorn[standard]" python-dotenv websockets openai edge-tts "deepgram-sdk==3.5.0"
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r backend\requirements.txt
+cd backend
+uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-**Mac / Linux (bash):**
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install fastapi "uvicorn[standard]" python-dotenv websockets openai edge-tts "deepgram-sdk==3.5.0"
+### Option B: uv on Windows
+
+Use this if the normal `python` command is unavailable or points to the Microsoft Store alias.
+
+```powershell
+$env:UV_CACHE_DIR="E:\Multilingual\.uv-cache"
+uv venv --python 3.14 .venv
+uv pip install -r backend\requirements.txt --python .venv\Scripts\python.exe
+cd backend
+..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Start the backend:
+Backend URLs:
 
-```bash
-uvicorn main:app --reload
-# Running at http://localhost:8000
-# WebSocket at ws://localhost:8000/ws
-```
+- API docs: `http://127.0.0.1:8000/docs`
+- WebSocket: `ws://127.0.0.1:8000/ws`
 
----
+## Frontend Setup
 
-### 3. Frontend Setup
-
-```bash
+```powershell
 cd frontend
 npm install
-npm run dev
-# Running at http://localhost:5173
+npm run dev -- --host 127.0.0.1
 ```
 
----
+Frontend URL:
 
-## 🌍 Supported Languages
+- App: `http://127.0.0.1:5173`
 
-| Flag | Language | Code | TTS Voice |
-|------|----------|------|-----------|
-| 🇪🇸 | Spanish | `es` | es-ES-AlvaroNeural |
-| 🇫🇷 | French | `fr` | fr-FR-HenriNeural |
-| 🇩🇪 | German | `de` | de-DE-KillianNeural |
-| 🇮🇳 | Hindi | `hi` | hi-IN-MadhurNeural |
-| 🇨🇳 | Chinese | `zh` | zh-CN-YunxiNeural |
-| 🇯🇵 | Japanese | `ja` | ja-JP-KeitaNeural |
-| 🇸🇦 | Arabic | `ar` | ar-SA-HamedNeural |
-| 🇧🇷 | Portuguese | `pt` | pt-BR-AntonioNeural |
-| 🇷🇺 | Russian | `ru` | ru-RU-DmitryNeural |
-| 🇰🇷 | Korean | `ko` | ko-KR-InJoonNeural |
-| 🇮🇹 | Italian | `it` | it-IT-DiegoNeural |
+## API Endpoints
 
----
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/translate` | Translate typed text and optionally return TTS audio as base64. |
+| `GET` | `/api/voices/{lang}` | Return available TTS voices for a language. |
+| `GET` | `/api/languages` | Return supported language codes and names. |
+| `POST` | `/api/notes` | Generate structured classroom notes from transcript text. |
+| `WS` | `/ws` | Stream audio chunks and receive transcription, translation, and audio frames. |
 
-## 🔌 WebSocket Protocol
+## WebSocket Protocol
 
-All communication happens over a single WebSocket at `ws://localhost:8000/ws`.
-
-### Client → Server
+Client to server:
 
 | Frame Type | Payload | Purpose |
 |---|---|---|
-| Binary | Raw PCM16, 16 kHz, mono | Audio chunk from microphone |
-| Text JSON | `{"type": "config", "target_lang": "es"}` | Set/change translation language |
+| Binary | PCM16 audio, 16 kHz, mono | Microphone audio chunk. |
+| Text JSON | `{"type":"config","target_lang":"es"}` | Set or change the target language. |
 
-### Server → Client
+Server to client:
 
-| Frame Type | JSON / Binary | Description |
+| Frame Type | Payload | Description |
 |---|---|---|
-| Text | `{"type": "partial", "text": "..."}` | Live in-progress transcript |
-| Text | `{"type": "final", "text": "..."}` | Completed sentence transcript |
-| Text | `{"type": "translation", "text": "..."}` | Translated sentence |
-| Binary | MP3 bytes | TTS audio for the translation |
+| Text JSON | `{"type":"partial","text":"..."}` | In-progress transcript. |
+| Text JSON | `{"type":"final","text":"..."}` | Final transcript segment. |
+| Text JSON | `{"type":"translation","text":"..."}` | Translated text. |
+| Binary | MP3 bytes | TTS audio for the translation. |
 
----
+## Supported Languages
 
-## 🏗 Architecture
+| Language | Code | Example TTS voice |
+|---|---|---|
+| Spanish | `es` | `es-ES-AlvaroNeural` |
+| French | `fr` | `fr-FR-HenriNeural` |
+| German | `de` | `de-DE-KillianNeural` |
+| Hindi | `hi` | `hi-IN-MadhurNeural` |
+| Chinese | `zh` | `zh-CN-YunxiNeural` |
+| Japanese | `ja` | `ja-JP-KeitaNeural` |
+| Arabic | `ar` | `ar-SA-HamedNeural` |
+| Portuguese | `pt` | `pt-BR-AntonioNeural` |
+| Russian | `ru` | `ru-RU-DmitryNeural` |
+| Korean | `ko` | `ko-KR-InJoonNeural` |
+| Italian | `it` | `it-IT-DiegoNeural` |
 
+## Notes For Development
+
+- `deepgram-sdk` is pinned to `3.5.0` because the backend imports `LiveOptions` and `LiveTranscriptionEvents`, which are not compatible with the latest Deepgram SDK API.
+- Keep `.env` out of Git. It is already covered by `.gitignore`.
+- CORS is currently open for local development. Restrict `allow_origins` before deploying.
+- Do not commit generated files such as `__pycache__`, `.venv`, `node_modules`, or local log files.
+
+## Useful Commands
+
+```powershell
+# Build frontend
+cd frontend
+npm run build
+
+# Run frontend lint
+cd frontend
+npm run lint
+
+# Start backend from repo root
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
 ```
-Microphone (16 kHz PCM)
-        │
-        ▼
-  WebSocket /ws
-        │
-   ┌────▼─────────────┐
-   │  ConnectionState  │  target_lang, asr_started, last_final
-   └────┬─────────────┘
-        │
-   ┌────▼──────┐    ┌────────────┐    ┌───────────┐
-   │  Deepgram │───▶│  OpenAI    │───▶│  Edge TTS │
-   │  ASR      │    │  gpt-4o    │    │  (MP3)    │
-   └───────────┘    └────────────┘    └─────┬─────┘
-                                            │
-                              Binary WebSocket frame
-                                            │
-                                     Audio Queue
-                                     (sequential
-                                      playback)
-```
 
----
+## License
 
-## 🐛 Known Issues & Current State
-
-| Status | Issue |
-|---|---|
-| ⚠️ Disabled | Deepgram ASR is temporarily bypassed — fake ASR runs once per session |
-| ✅ Fixed | `google.generativeai` replaced with OpenAI (was deprecated, no ADC) |
-| ✅ Fixed | WebSocket disconnect crash (`receive after disconnect`) |
-| ✅ Fixed | Duplicate transcript spam (dedup via `last_final` guard) |
-| ✅ Fixed | Target language race condition (snapshot at task-start) |
-
-To re-enable Deepgram, uncomment the ASR init block in `websocket.py` once the integration is stable.
-
----
-
-## 🔒 Security Notes
-
-- **Never commit `.env`** — it contains secret API keys
-- `.env` is listed in `.gitignore` (verify this before pushing)
-- CORS is set to `allow_origins=["*"]` for development — restrict in production
-
----
-
-## 📄 License
-
-MIT — free to use, modify, and distribute.
+MIT

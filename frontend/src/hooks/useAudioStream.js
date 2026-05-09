@@ -6,23 +6,69 @@ const WS_URL = 'ws://localhost:8000/ws';
 function createAudioQueue() {
   const queue = [];
   let isPlaying = false;
+  let currentAudio = null;
+  let currentUrl = null;
+
+  function cleanupCurrent() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.src = '';
+      currentAudio = null;
+    }
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
+  }
 
   async function playNext() {
     if (isPlaying || queue.length === 0) return;
     isPlaying = true;
     const blob = queue.shift();
     const url = URL.createObjectURL(blob);
+    currentUrl = url;
     const audio = new Audio(url);
-    const done = () => { URL.revokeObjectURL(url); isPlaying = false; playNext(); };
+    currentAudio = audio;
+    const done = () => {
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+      if (currentUrl === url) currentUrl = null;
+      isPlaying = false;
+      playNext();
+    };
     audio.onended = done;
     audio.onerror = done;
-    try { await audio.play(); } catch { done(); }
+    try {
+      console.log('[AUDIO] Playback started', { bytes: blob.size });
+      await audio.play();
+    } catch (error) {
+      console.warn('[AUDIO] Playback failed', error);
+      done();
+    }
   }
 
   return {
     enqueue(blob) { queue.push(blob); playNext(); },
-    clear() { queue.length = 0; isPlaying = false; },
+    playNow(blob) {
+      queue.length = 0;
+      isPlaying = false;
+      cleanupCurrent();
+      queue.push(blob);
+      playNext();
+    },
+    clear() {
+      queue.length = 0;
+      isPlaying = false;
+      cleanupCurrent();
+    },
   };
+}
+
+function base64ToBlob(base64, mimeType = 'audio/mpeg') {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
 }
 
 // ── Downsample Float32 from nativeRate → 16000 Hz ────────────────────────
@@ -177,6 +223,11 @@ export function useAudioStream() {
 
       case 'text_translation_result':
         // Handled by translateText promise via pendingTextRequests map
+        console.log('[TEXT] Translation response', {
+          id: data.id,
+          hasAudio: Boolean(data.audio || data.audio_base64),
+          error: data.error,
+        });
         pendingTextRequestsRef.current.get(data.id)?.(data);
         pendingTextRequestsRef.current.delete(data.id);
         break;
@@ -394,6 +445,27 @@ export function useAudioStream() {
     pendingSubtitleRef.current = null;
   }, []);
 
+  const playAudioBase64 = useCallback((audioBase64, mimeType = 'audio/mpeg') => {
+    if (!audioBase64) {
+      console.warn('[TTS] No audio payload to play');
+      return false;
+    }
+    if (!speechEnabledRef.current) {
+      console.log('[AUDIO] Typed TTS skipped because playback is off');
+      return false;
+    }
+
+    try {
+      const blob = base64ToBlob(audioBase64, mimeType);
+      console.log('[TTS] Playing typed translation audio', { bytes: blob.size, mimeType });
+      audioQueueRef.current.playNow(blob);
+      return true;
+    } catch (error) {
+      console.error('[TTS] Failed to decode typed translation audio', error);
+      return false;
+    }
+  }, []);
+
   const clearLiveText = useCallback(() => {
     setPartialTranscript('');
     pendingSubtitleRef.current = null;
@@ -430,6 +502,7 @@ export function useAudioStream() {
     startRecording, stopRecording,
     sendConfig, clearSession, clearLiveText,
     translateText,
+    playAudioBase64,
     sendTestTone,
   };
 }

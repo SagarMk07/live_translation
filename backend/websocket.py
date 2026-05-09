@@ -169,15 +169,21 @@ async def _handle_text_translate(
     """Handle typed text translation request over WebSocket."""
     import base64
     try:
+        print(f"[TEXT_TRANSLATE] Request id={req_id} target={target_lang} gender={gender} rate={rate}")
         translated = await translate_text(text, target_lang, source_lang)
+        print(f"[TEXT_TRANSLATE] Translation id={req_id}: '{translated}'")
         audio = await generate_audio(translated, target_lang, voice_id, gender, rate)
         audio_b64 = base64.b64encode(audio).decode() if audio else None
+        print(f"[TEXT_TRANSLATE] TTS id={req_id}: {len(audio) if audio else 0} bytes")
         await websocket.send_json({
             "type": "text_translation_result",
             "id": req_id,
             "original": text,
+            "translation": translated,
             "translated": translated,
             "audio": audio_b64,
+            "audio_base64": audio_b64,
+            "audio_mime": "audio/mpeg",
         })
     except Exception as e:
         print(f"[TEXT_TRANSLATE] Error: {e}")

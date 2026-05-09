@@ -65,7 +65,7 @@ export default function BottomBar({
             type="button"
           >
             {isTranslating ? <span className="spinner" /> : null}
-            Translate
+            {isTranslating && textMode ? 'Generating speech' : 'Translate'}
           </button>
         </div>
       </div>

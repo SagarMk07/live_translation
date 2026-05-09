@@ -78,7 +78,7 @@ export default function App() {
     getAnalyserData,
     startRecording, stopRecording,
     sendConfig, clearSession, clearLiveText,
-    translateText,
+    translateText, playAudioBase64,
   } = useAudioStream();
 
   useEffect(() => {
@@ -111,7 +111,10 @@ export default function App() {
     setIsTranslating(true);
     try {
       const result = await translateText(text);
+      console.log('[TEXT] Translation result', result);
+      if (result?.error) throw new Error(result.error);
       const translated = result?.translated ?? result?.text ?? result?.translation ?? '';
+      const audioBase64 = result?.audio_base64 ?? result?.audio ?? null;
       setTypedEntries((prev) => [
         ...prev,
         {
@@ -125,6 +128,15 @@ export default function App() {
           mode: 'text',
         },
       ]);
+      if (audioBase64) {
+        console.log('[TTS] Typed translation audio received', {
+          chars: audioBase64.length,
+          playbackEnabled: speechEnabled,
+        });
+        playAudioBase64(audioBase64, result?.audio_mime ?? 'audio/mpeg');
+      } else {
+        console.warn('[TTS] Typed translation response did not include audio');
+      }
       setInputText('');
     } catch (error) {
       console.error('[TEXT]', error);

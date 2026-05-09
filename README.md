@@ -46,6 +46,7 @@ Multilingual/
 - Node.js 18 or newer.
 - OpenAI API key.
 - Deepgram API key if you enable live ASR.
+- Two terminal windows: one for the backend and one for the frontend.
 
 ## Environment
 
@@ -56,48 +57,121 @@ OPENAI_API_KEY=your_openai_api_key
 DEEPGRAM_API_KEY=your_deepgram_api_key
 ```
 
-The app has fallback behavior for some AI features, but full translation, notes, and ASR require valid keys.
+The app has fallback behavior for some AI features, but full translation, notes, TTS, and ASR require valid keys and network access.
 
-## Backend Setup
+## Quick Start
 
-### Option A: Standard Python
+Run the backend and frontend in separate terminals.
+
+## How To Run The Project
+
+### Step 1: Open the project folder
+
+```powershell
+cd E:\Multilingual
+```
+
+### Step 2: Create the backend environment
+
+Run this once:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r backend\requirements.txt
-cd backend
-uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### Option B: uv on Windows
+If `python` does not work on Windows, use the `uv` setup section below.
+
+### Step 3: Run the backend
+
+Open Terminal 1:
+
+```powershell
+cd E:\Multilingual
+.\.venv\Scripts\activate
+python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
+```
+
+Backend runs at:
+
+```text
+http://127.0.0.1:8000
+```
+
+API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+WebSocket:
+
+```text
+ws://127.0.0.1:8000/ws
+```
+
+### Step 4: Install frontend dependencies
+
+Run this once:
+
+```powershell
+cd E:\Multilingual\frontend
+npm install
+```
+
+### Step 5: Run the frontend
+
+Open Terminal 2:
+
+```powershell
+cd E:\Multilingual\frontend
+npm run dev -- --host 127.0.0.1
+```
+
+Frontend runs at:
+
+```text
+http://127.0.0.1:5173
+```
+
+Open `http://127.0.0.1:5173` in your browser.
+
+## Backend Setup With uv
 
 Use this if the normal `python` command is unavailable or points to the Microsoft Store alias.
 
 ```powershell
+# From the project root
 $env:UV_CACHE_DIR="E:\Multilingual\.uv-cache"
 uv venv --python 3.14 .venv
 uv pip install -r backend\requirements.txt --python .venv\Scripts\python.exe
-cd backend
-..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
 ```
 
-Backend URLs:
+If you use a different checkout path, replace `E:\Multilingual` in `UV_CACHE_DIR` with your project path.
 
-- API docs: `http://127.0.0.1:8000/docs`
-- WebSocket: `ws://127.0.0.1:8000/ws`
+## Run Commands Summary
 
-## Frontend Setup
+Backend from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
+```
+
+Frontend from the project root:
 
 ```powershell
 cd frontend
-npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Frontend URL:
+Production frontend build:
 
-- App: `http://127.0.0.1:5173`
+```powershell
+cd frontend
+npm run build
+```
 
 ## API Endpoints
 
@@ -146,9 +220,60 @@ Server to client:
 ## Notes For Development
 
 - `deepgram-sdk` is pinned to `3.5.0` because the backend imports `LiveOptions` and `LiveTranscriptionEvents`, which are not compatible with the latest Deepgram SDK API.
+- Typed translation uses the WebSocket `text_translate` message and receives translated text plus base64 MP3 audio for playback.
+- Live voice translation receives binary MP3 audio frames over the same WebSocket.
 - Keep `.env` out of Git. It is already covered by `.gitignore`.
 - CORS is currently open for local development. Restrict `allow_origins` before deploying.
 - Do not commit generated files such as `__pycache__`, `.venv`, `node_modules`, or local log files.
+
+## Troubleshooting
+
+### `python` opens Microsoft Store or fails on Windows
+
+Use the `uv` setup shown above, or install Python from `python.org` and make sure it is on PATH.
+
+### Frontend cannot connect to backend
+
+Make sure the backend is running at `http://127.0.0.1:8000` and the WebSocket URL in `frontend/src/hooks/useAudioStream.js` points to `ws://localhost:8000/ws`.
+
+### Backend says `Could not import module "main"`
+
+You are running Uvicorn from the project root without telling it where `backend/main.py` is. Use this command from `E:\Multilingual`:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
+```
+
+Or run from inside the backend folder:
+
+```powershell
+cd E:\Multilingual\backend
+..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### Backend says socket access is forbidden or port 8000 is busy
+
+Check what is using port `8000`:
+
+```powershell
+netstat -ano | findstr :8000
+```
+
+Stop the process by PID:
+
+```powershell
+taskkill /PID <PID_FROM_NETSTAT> /F
+```
+
+Then start the backend again:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
+```
+
+### Typed translation works but audio does not play
+
+Check that the Audio Playback toggle is on. Also check the browser console for `[TTS]` and `[AUDIO]` logs.
 
 ## Useful Commands
 

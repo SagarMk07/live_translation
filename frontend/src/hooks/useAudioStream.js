@@ -386,13 +386,18 @@ export function useAudioStream() {
     console.log('[MIC] Stopped');
   };
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     setSubtitles([]);
     setPartialTranscript('');
     setDetectedLang(null);
     audioQueueRef.current.clear();
     pendingSubtitleRef.current = null;
-  };
+  }, []);
+
+  const clearLiveText = useCallback(() => {
+    setPartialTranscript('');
+    pendingSubtitleRef.current = null;
+  }, []);
 
   // ── Test tone (debugging) ─────────────────────────────────────────────────
   const sendTestTone = () => {
@@ -423,7 +428,7 @@ export function useAudioStream() {
     volumeLevel,
     getAnalyserData,
     startRecording, stopRecording,
-    sendConfig, clearSession,
+    sendConfig, clearSession, clearLiveText,
     translateText,
     sendTestTone,
   };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAudioStream } from './hooks/useAudioStream';
 import { LANG_NAMES } from './constants/languages';
 import ControlPanel from './components/ControlPanel';
@@ -64,6 +64,8 @@ export default function App() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [typedEntries, setTypedEntries] = useState([]);
+  const [liveClearedAt, setLiveClearedAt] = useState(null);
+  const [liveClearTick, setLiveClearTick] = useState(0);
 
   const {
     isConnected, isRecording,
@@ -75,7 +77,7 @@ export default function App() {
     volumeLevel,
     getAnalyserData,
     startRecording, stopRecording,
-    sendConfig, clearSession,
+    sendConfig, clearSession, clearLiveText,
     translateText,
   } = useAudioStream();
 
@@ -88,14 +90,19 @@ export default function App() {
     [subtitles, typedEntries]
   );
 
+  const liveEntries = useMemo(() => {
+    if (!liveClearedAt) return conversationEntries;
+    return conversationEntries.filter((entry) => entry.timestamp > liveClearedAt);
+  }, [conversationEntries, liveClearedAt]);
+
   const aiStatus = useMemo(() => {
     if (isTranslating) return 'translating';
     if (!isRecording) return 'idle';
-    const hasPending = conversationEntries.some((entry) => entry.translated === null);
+    const hasPending = liveEntries.some((entry) => entry.translated === null);
     if (hasPending) return 'translating';
     if (partialTranscript || volumeLevel > 0.04) return 'listening';
     return 'listening';
-  }, [isRecording, isTranslating, conversationEntries, partialTranscript, volumeLevel]);
+  }, [isRecording, isTranslating, liveEntries, partialTranscript, volumeLevel]);
 
   const handleTranslateText = async () => {
     const text = inputText.trim();
@@ -129,7 +136,27 @@ export default function App() {
   const handleClearSession = () => {
     clearSession();
     setTypedEntries([]);
+    setLiveClearedAt(null);
+    setLiveClearTick((value) => value + 1);
   };
+
+  const handleClearLive = useCallback(() => {
+    clearLiveText();
+    setLiveClearedAt(new Date());
+    setLiveClearTick((value) => value + 1);
+  }, [clearLiveText]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        if (activeTab !== 'history') handleClearLive();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, handleClearLive]);
 
   return (
     <div className="app-shell">
@@ -214,7 +241,7 @@ export default function App() {
           ) : (
             <>
               <ConversationFeed
-                subtitles={conversationEntries}
+                subtitles={liveEntries}
                 partialTranscript={partialTranscript}
                 isRecording={isRecording}
                 aiStatus={aiStatus}
@@ -223,6 +250,8 @@ export default function App() {
                 detectedLang={detectedLang}
                 volumeLevel={volumeLevel}
                 getAnalyserData={getAnalyserData}
+                onClearLive={handleClearLive}
+                clearTick={liveClearTick}
               />
               <BottomBar
                 isConnected={isConnected}
